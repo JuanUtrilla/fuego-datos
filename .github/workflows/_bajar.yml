@@ -1,0 +1,39 @@
+# Plantilla común: la llaman los demás workflows con la lista de jobs.
+name: _bajar
+on:
+  workflow_call:
+    inputs:
+      jobs:
+        type: string
+        required: true
+      minutos:
+        type: number
+        default: 30
+
+permissions:
+  contents: read
+
+jobs:
+  bajar:
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.minutos }}
+    env:
+      PYTHONUNBUFFERED: "1"
+      EXIGIR_R2: "1"
+      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_BRUTO_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_BRUTO_SECRET_ACCESS_KEY }}
+      R2_BUCKET: fuego-bruto
+      AEMET_API_KEY: ${{ secrets.AEMET_API_KEY }}
+      FIRMS_MAP_KEY: ${{ secrets.FIRMS_MAP_KEY }}
+      CDSAPI_URL: https://cds.climate.copernicus.eu/api
+      CDSAPI_KEY: ${{ secrets.CDSAPI_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-file: environment.yml
+          cache-environment: true
+      - name: Descargar (${{ inputs.jobs }})
+        shell: bash -el {0}
+        run: python -m fuego_datos bajar ${{ inputs.jobs }}

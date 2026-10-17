@@ -1,0 +1,9 @@
+[Unit]
+Description=Copia semanal del bucket fuego-bruto al disco y limpieza del bucket
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/proyectos/fuego/fuego-datos
+ExecStart=%h/miniconda3/bin/conda run --no-capture-output -n fuego_datos python -m fuego_datos sincronizar

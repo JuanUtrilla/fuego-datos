@@ -1,0 +1,15 @@
+name: AEMET predicción por municipios
+on:
+  schedule:
+    - cron: "37 */3 * * *"
+  workflow_dispatch:
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+jobs:
+  bajar:
+    uses: ./.github/workflows/_bajar.yml
+    with:
+      jobs: "aemet-pred"
+      minutos: 20
+    secrets: inherit

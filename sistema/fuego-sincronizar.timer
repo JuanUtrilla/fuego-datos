@@ -1,0 +1,11 @@
+[Unit]
+Description=Sincronización semanal del bucket fuego-bruto
+
+[Timer]
+# domingo a mediodía; si el ordenador estaba apagado, al encenderlo
+OnCalendar=Sun *-*-* 12:00:00
+Persistent=true
+RandomizedDelaySec=15min
+
+[Install]
+WantedBy=timers.target

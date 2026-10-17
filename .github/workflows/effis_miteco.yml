@@ -1,0 +1,15 @@
+name: EFFIS y partes del MITECO
+on:
+  schedule:
+    - cron: "47 7,11,13,16,19 * * *"
+  workflow_dispatch:
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+jobs:
+  bajar:
+    uses: ./.github/workflows/_bajar.yml
+    with:
+      jobs: "effis miteco"
+      minutos: 20
+    secrets: inherit

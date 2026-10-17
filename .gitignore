@@ -1,0 +1,18 @@
+# claves
+.env
+.cdsapirc
+
+# datos: nunca entran en git
+datos/
+datos_locales/
+*.nc
+*.grib
+*.grib2
+*.bz2
+*.tar.gz
+*.csv.gz
+*.geojson.gz
+
+__pycache__/
+*.pyc
+.pytest_cache/

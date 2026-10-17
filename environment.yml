@@ -1,0 +1,17 @@
+name: fuego_datos
+channels:
+  - conda-forge
+  - nodefaults
+dependencies:
+  - python=3.12
+  - requests
+  - urllib3
+  - numpy
+  - xarray
+  - netcdf4
+  - eccodes
+  - python-eccodes
+  - boto3
+  - cdsapi
+  - python-dotenv
+  - pytest

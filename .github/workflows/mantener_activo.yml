@@ -1,0 +1,20 @@
+# GitHub desactiva los workflows programados de un repo público tras 60 días
+# sin actividad, y este repo no hace commits (los datos van al bucket). Cada
+# mes se vuelven a activar todos, lo que reinicia esa cuenta.
+name: Mantener activo
+on:
+  schedule:
+    - cron: "5 4 1 * *"
+  workflow_dispatch:
+permissions:
+  actions: write
+jobs:
+  activar:
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for id in $(gh api "repos/${{ github.repository }}/actions/workflows" --jq '.workflows[].id'); do
+            gh api -X PUT "repos/${{ github.repository }}/actions/workflows/$id/enable" && echo "activado $id"
+          done

@@ -1,0 +1,27 @@
+# Cada mañana comprueba que todas las fuentes están al día. Si alguna no lo
+# está, el workflow falla y GitHub manda un correo.
+name: Vigilancia
+on:
+  schedule:
+    - cron: "11 9 * * *"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  estado:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      EXIGIR_R2: "1"
+      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_BRUTO_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_BRUTO_SECRET_ACCESS_KEY }}
+      R2_BUCKET: fuego-bruto
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-file: environment.yml
+          cache-environment: true
+      - shell: bash -el {0}
+        run: python -m fuego_datos estado --margen-horas 6

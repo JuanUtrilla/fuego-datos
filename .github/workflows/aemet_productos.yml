@@ -1,0 +1,15 @@
+name: AEMET mapas de incendio, avisos y HARMONIE
+on:
+  schedule:
+    - cron: "53 */6 * * *"
+  workflow_dispatch:
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+jobs:
+  bajar:
+    uses: ./.github/workflows/_bajar.yml
+    with:
+      jobs: "aemet-productos"
+      minutos: 30
+    secrets: inherit

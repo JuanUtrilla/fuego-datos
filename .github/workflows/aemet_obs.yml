@@ -1,0 +1,15 @@
+name: AEMET observación
+on:
+  schedule:
+    - cron: "7 */3 * * *"
+  workflow_dispatch:
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+jobs:
+  bajar:
+    uses: ./.github/workflows/_bajar.yml
+    with:
+      jobs: "aemet-obs"
+      minutos: 20
+    secrets: inherit
