@@ -27,6 +27,8 @@ log = logging.getLogger(__name__)
 BASE = "https://ecmwf-forecasts.s3.eu-central-1.amazonaws.com"
 HORAS = (0, 6, 12, 18)
 PASO_MAX = 144
+HUECO = 1 << 20          # 1 MB
+HILOS = 4
 LICENCIA = "CC BY 4.0. © ECMWF. Datos recortados al dominio, sin otra modificación"
 
 # (param, levtype, niveles). Nivel None = superficie.
@@ -53,13 +55,20 @@ def _quiero(linea):
     return False
 
 
-def rangos(lineas):
-    """Rangos de bytes de los campos elegidos, uniendo los contiguos."""
-    sel = sorted((int(x["_offset"]), int(x["_length"])) for x in lineas if _quiero(x))
+def elegidos(lineas):
+    """(posición, tamaño) de los campos elegidos, ordenados."""
+    return sorted((int(x["_offset"]), int(x["_length"])) for x in lineas if _quiero(x))
+
+
+def rangos(campos, hueco=HUECO):
+    """Agrupa los campos en pocos rangos de bytes. Dos campos van en el mismo
+    rango si entre ellos hay menos de `hueco` bytes de otros campos: se bajan
+    unos bytes de más a cambio de muchas menos peticiones (la copia de AWS
+    contesta «503 Slow Down» si se le hacen demasiadas)."""
     juntos = []
-    for ini, largo in sel:
-        if juntos and juntos[-1][0] + juntos[-1][1] == ini:
-            juntos[-1][1] += largo
+    for ini, largo in campos:
+        if juntos and ini - (juntos[-1][0] + juntos[-1][1]) <= hueco:
+            juntos[-1][1] = ini + largo - juntos[-1][0]
         else:
             juntos.append([ini, largo])
     return [tuple(r) for r in juntos]
@@ -90,23 +99,27 @@ def completa(fecha, hora, resol):
 
 
 def _bajar_paso(fecha, hora, resol, paso):
+    url = _url(fecha, hora, resol, paso, "grib2")
     lineas = [json.loads(l) for l in get(_url(fecha, hora, resol, paso, "index")).text.splitlines() if l.strip()]
+    campos = elegidos(lineas)
     trozos = []
-    for ini, largo in rangos(lineas):
-        r = get(_url(fecha, hora, resol, paso, "grib2"),
-                headers={"Range": f"bytes={ini}-{ini + largo - 1}"})
+    for ini, largo in rangos(campos):
+        r = get(url, headers={"Range": f"bytes={ini}-{ini + largo - 1}"})
         if len(r.content) != largo:
             raise IOError(f"paso {paso}: se esperaban {largo} bytes y llegaron {len(r.content)}")
-        trozos.append(r.content)
+        # del rango se recortan solo los campos elegidos
+        trozos += [r.content[o - ini:o - ini + n] for o, n in campos if ini <= o < ini + largo]
+    if len(trozos) != len(campos):
+        raise IOError(f"paso {paso}: {len(trozos)} campos de {len(campos)}")
     return paso, b"".join(trozos)
 
 
-def bajar_pasada(fecha, hora, resol):
-    pasos = list(range(0, PASO_MAX + 1, 3))
+def bajar_pasada(fecha, hora, resol, paso_max=PASO_MAX):
+    pasos = list(range(0, paso_max + 1, 3))
     campos = []
-    # Se descargan 8 pasos a la vez y cada uno se recorta en cuanto llega, para
+    # Se descargan HILOS pasos a la vez y cada uno se recorta en cuanto llega, para
     # no tener en memoria los campos globales de todos los pasos.
-    with ThreadPoolExecutor(8) as ex:
+    with ThreadPoolExecutor(HILOS) as ex:
         futuros = [ex.submit(_bajar_paso, fecha, hora, resol, p) for p in pasos]
         for f in as_completed(futuros):
             paso, bloque = f.result()

@@ -1,8 +1,9 @@
 """Peticiones HTTP con reintentos.
 
-Todas las descargas pasan por aquí: reintentos con espera creciente ante
-errores de red, 429 y 5xx, respetando la cabecera Retry-After, y un tiempo
-máximo por petición para que un servidor colgado no bloquee el job.
+Todas las descargas pasan por aquí: hasta 8 reintentos con espera creciente
+(unos 6 minutos en total) ante errores de red, 429 y 5xx, respetando la
+cabecera Retry-After, y un tiempo máximo por petición para que un servidor
+colgado no bloquee el job.
 """
 import json
 import logging
@@ -19,7 +20,7 @@ log = logging.getLogger(__name__)
 TIEMPO = (20, 300)  # conexión, lectura (s)
 
 
-def sesion(intentos=5, hilos=16):
+def sesion(intentos=8, hilos=16):
     s = requests.Session()
     reintentos = Retry(
         total=intentos, connect=intentos, read=intentos, status=intentos,

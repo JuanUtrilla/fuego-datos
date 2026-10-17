@@ -1,9 +1,11 @@
 """ERA5-Land horario (Copernicus Climate Data Store), CC BY 4.0.
 
 Reanálisis de 0,1° (~9 km), cada hora, con unos 5 días de retraso. Se pide un
-día por petición, en GRIB tal como lo entrega el CDS: es el formato nativo y
-el más compacto. ERA5-Land se puede volver a descargar cuando se quiera, así
-que aquí lo importante es tenerlo al día, no la urgencia.
+día por petición, en NetCDF tal como lo entrega el CDS: es el formato que lee
+la cadena de cálculo, así que el servidor no necesita librerías de GRIB. Como
+hay variables instantáneas y acumuladas, el CDS lo entrega en un zip con dos
+NetCDF, y se guarda así. ERA5-Land se puede volver a descargar cuando se
+quiera, así que aquí lo importante es tenerlo al día, no la urgencia.
 
 Credenciales: CDSAPI_URL y CDSAPI_KEY (o ~/.cdsapirc).
 """
@@ -38,10 +40,10 @@ def bajar_dia(dia):
     peticion = {
         "variable": VARIABLES, "year": f"{dia:%Y}", "month": f"{dia:%m}", "day": [f"{dia:%d}"],
         "time": [f"{h:02d}:00" for h in range(24)],
-        "area": [NORTE, OESTE, SUR, ESTE], "data_format": "grib", "download_format": "unarchived",
+        "area": [NORTE, OESTE, SUR, ESTE], "data_format": "netcdf", "download_format": "unarchived",
     }
     with tempfile.TemporaryDirectory() as d:
-        ruta = Path(d) / "era5land.grib"
+        ruta = Path(d) / "era5land"
         cliente.retrieve("reanalysis-era5-land", peticion, str(ruta))
         return ruta.read_bytes()
 
@@ -51,8 +53,8 @@ def ejecutar(lote):
     hechas = 0
     for d in range(VENTANA, RETRASO_MIN - 1, -1):
         dia = hoy - timedelta(days=d)
-        clave = lote.clave("horario", f"era5land_{dia:%Y%m%d}.grib", dia)
-        if lote.almacen.existe(clave):
+        hecho = [o for o in lote.almacen.listar(lote.clave("horario", f"era5land_{dia:%Y%m%d}.", dia))]
+        if hecho:
             continue
         log.info("ERA5-Land %s: pidiendo al CDS", f"{dia:%F}")
         try:
@@ -63,6 +65,8 @@ def ejecutar(lote):
             break
         if len(datos) < 1_000_000:
             raise RuntimeError(f"ERA5-Land {dia:%F}: fichero sospechosamente pequeño ({len(datos)} bytes)")
+        ext = "zip" if datos[:2] == b"PK" else "nc"
+        clave = lote.clave("horario", f"era5land_{dia:%Y%m%d}.{ext}", dia)
         lote.guardar(clave, datos, origen=f"CDS reanalysis-era5-land {dia:%F}", licencia=LICENCIA)
         hechas += 1
     return hechas

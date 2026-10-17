@@ -72,7 +72,10 @@ def test_rangos_ecmwf_une_contiguos():
         {"param": "t", "levtype": "pl", "levelist": "850", "_offset": 25, "_length": 4},
         {"param": "t", "levtype": "pl", "levelist": "500", "_offset": 29, "_length": 4},  # nivel no
     ]
-    assert ecmwf.rangos(lineas) == [(0, 15), (22, 7)]
+    campos = ecmwf.elegidos(lineas)
+    assert campos == [(0, 10), (10, 5), (22, 3), (25, 4)]
+    assert ecmwf.rangos(campos, hueco=0) == [(0, 15), (22, 7)]
+    assert ecmwf.rangos(campos, hueco=7) == [(0, 29)]          # se salta ttr
 
 
 def test_nombre_gzip():
