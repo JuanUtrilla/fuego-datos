@@ -11,7 +11,7 @@ Cloudflare R2 y, una vez por semana, a un disco local.
 |---|---|---|---|---|---|---|
 | `ecmwf` | IFS de ECMWF (datos abiertos, copia en AWS) | 33 variables: superficie, suelo y niveles de 850 y 700 hPa | 0,25° (0,1° en cuanto ECMWF la publique) | 3 h, hasta 144 h | 4 pasadas | ~17 MB |
 | `icon-eu` | ICON-EU del DWD | 23 variables: superficie, rayos, altura de mezcla y suelo | 0,0625° (~7 km) | 1 h hasta 78 h, luego 3 h | 8 pasadas | ~260 MB |
-| `era5land` | ERA5-Land (Copernicus CDS) | 16 variables, GRIB tal cual | 0,1° (~9 km) | 1 h | 1 día, con ~5 de retraso | por medir |
+| `era5land` | ERA5-Land (Copernicus CDS) | 16 variables, GRIB tal cual | 0,1° (~9 km) | 1 h | 1 día, con ~5 de retraso | ~7 MB |
 | `aemet-obs` | AEMET | Observación de todas las estaciones (~856) | Puntos | 1 h | Cada 3 h (ventana de 12 h) | ~4 MB |
 | `aemet-pred` | AEMET | Predicción horaria (48 h) y diaria (7 días) de los 8.124 municipios | Puntos | 1 h / 1 día | Cada 3 h, si cambia | ~20 MB |
 | `aemet-productos` | AEMET | Mapas de riesgo de incendio (+1 a +7 días), avisos CAP, HARMONIE-AROME | Imagen / 2,5 km | — | Cada 6 h, si cambia | ~35 MB |
