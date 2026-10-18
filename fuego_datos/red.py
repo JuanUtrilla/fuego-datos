@@ -71,7 +71,8 @@ def aemet(ruta, clave, intentos=4):
         if estado == 404:
             raise SinDatos(f"AEMET {ruta}: {sobre.get('descripcion')}")
         if estado == 401:
-            raise SystemExit("AEMET: clave rechazada (401). Revisa AEMET_API_KEY")
+            raise SystemExit(f"AEMET {ruta}: clave rechazada (HTTP {r.status_code}: "
+                             f"{sobre.get('descripcion')!r}). Revisa AEMET_API_KEY")
         espera = 65 * intento if estado == 429 else 10 * intento
         log.warning("AEMET %s: estado %s (%s); reintento en %s s", ruta, estado,
                     sobre.get("descripcion"), espera)
