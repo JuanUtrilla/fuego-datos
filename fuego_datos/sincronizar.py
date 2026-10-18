@@ -9,6 +9,9 @@ Reglas, por este orden:
    destino no está montado (disco desconectado), no se borra nada.
 4. `estado/` no se copia ni se borra: es lo que usan los jobs para no guardar
    dos veces lo mismo.
+5. Lo que el servidor de la web vuelve a pedir del bucket se queda más tiempo
+   (`RETENCION_MINIMA`), aunque ya esté copiado: el IFS de D-8 en adelante y
+   el ERA5-Land desde el día 1 del mes de D-6.
 """
 import logging
 import os
@@ -21,6 +24,7 @@ from .almacen import sha256
 log = logging.getLogger(__name__)
 
 EXCLUIDOS = ("estado/",)
+RETENCION_MINIMA = {"ecmwf/": 10, "era5land/": 40}     # días
 
 
 class Destino:
@@ -89,11 +93,16 @@ def sincronizar(almacen, rutas, retencion_dias=7, simulacion=False):
             errores += 1
             log.error("no se pudo copiar %s: %s", o.clave, e)
 
-    limite = datetime.now(timezone.utc) - timedelta(days=retencion_dias)
+    ahora = datetime.now(timezone.utc)
+
+    def caducado(o):
+        dias = max([retencion_dias] + [n for p, n in RETENCION_MINIMA.items() if o.clave.startswith(p)])
+        return o.modificado < ahora - timedelta(days=dias)
+
     borrables = []
     if all(d.ok for d in destinos) and not errores:
         borrables = [o.clave for o in objetos
-                     if o.modificado < limite and all(d.tiene(o.clave) for d in destinos)]
+                     if caducado(o) and all(d.tiene(o.clave) for d in destinos)]
     elif errores:
         log.warning("hubo %d errores de copia: esta vez no se borra nada del bucket", errores)
     if borrables and not simulacion:

@@ -34,6 +34,20 @@ def test_copia_todo_y_borra_solo_lo_viejo(tmp_path):
     assert not (disco / "estado").exists()
 
 
+def test_lo_que_pide_el_servidor_se_queda_mas(tmp_path):
+    a = _bucket(tmp_path)
+    for clave, dias in (("era5land/h/1.nc", 30), ("era5land/h/2.nc", 41),
+                        ("ecmwf/i/1.nc", 9), ("ecmwf/i/2.nc", 11)):
+        a.guardar(clave, clave.encode(), {"sha256": sha256(clave.encode())})
+        _envejecer(a, clave, dias)
+    disco = tmp_path / "disco"
+    disco.mkdir()
+    sincronizar(a, [disco], retencion_dias=7)
+    assert all((disco / c).exists() for c in ("era5land/h/1.nc", "era5land/h/2.nc", "ecmwf/i/1.nc"))
+    assert a.existe("era5land/h/1.nc") and a.existe("ecmwf/i/1.nc")
+    assert not a.existe("era5land/h/2.nc") and not a.existe("ecmwf/i/2.nc")
+
+
 def test_disco_desconectado_no_borra(tmp_path):
     a = _bucket(tmp_path)
     disco = tmp_path / "disco"
