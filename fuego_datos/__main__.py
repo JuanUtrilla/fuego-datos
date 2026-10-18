@@ -64,6 +64,23 @@ def bajar(nombres):
     return 0
 
 
+def rellenar_ifs(desde, hasta):
+    """Como `bajar ecmwf`, pero para un tramo de fechas pasadas. No deja latido:
+    no es un job programado y `estado` no lo vigila."""
+    from .fuentes import ecmwf
+    almacen = alm.abrir()
+    lote = alm.Lote(almacen, "ecmwf", "ecmwf-relleno")
+    try:
+        n = ecmwf.rellenar(lote, desde, hasta)
+        log.info("relleno IFS %s → %s: %d pasada(s) nuevas", desde, hasta, n)
+        return 0
+    except Exception:
+        log.exception("relleno IFS %s → %s con fallos", desde, hasta)
+        return 1
+    finally:
+        lote.cerrar()
+
+
 def estado(margen_horas=0):
     """Para cada job: cuándo terminó bien por última vez (latido) y cuándo
     guardó datos nuevos (manifiesto). Error si alguno pasa de su límite."""
@@ -102,11 +119,16 @@ def main(argv=None):
     b.add_argument("jobs", nargs="+")
     s = sub.add_parser("sincronizar")
     s.add_argument("--simulacion", action="store_true", help="no copia ni borra; solo dice qué haría")
+    ri = sub.add_parser("rellenar-ifs", help="pasadas antiguas de IFS 0,25° del archivo de AWS")
+    ri.add_argument("desde", help="aaaa-mm-dd")
+    ri.add_argument("hasta", help="aaaa-mm-dd (incluida)")
     e = sub.add_parser("estado")
     e.add_argument("--margen-horas", type=float, default=0)
     a = p.parse_args(argv)
     if a.orden == "bajar":
         return bajar(a.jobs)
+    if a.orden == "rellenar-ifs":
+        return rellenar_ifs(a.desde, a.hasta)
     if a.orden == "estado":
         return estado(a.margen_horas)
     from .sincronizar import sincronizar

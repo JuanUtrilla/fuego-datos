@@ -9,15 +9,21 @@ Cada paso de cada pasada es un GRIB global con todos los campos y un `.index`
 piden por rangos de bytes solo los campos elegidos: unos 30 de los ~200 que
 trae cada paso.
 
-Pasadas de 00, 06, 12 y 18 UTC, de 0 a 144 h cada 3 h. Se usa la malla más
-fina que haya publicada: hoy 0,25°; ECMWF ha anunciado 0,1° para finales de
-octubre de 2026 y entrará sola en cuanto aparezca la carpeta.
+Pasadas de 00, 06, 12 y 18 UTC, de 0 a 144 h cada 3 h (las de 06 y 18 UTC,
+hasta 90 h antes de 2025). Se guarda siempre la malla de 0,25°, que es con la
+que está calibrado el cálculo de la web, y además la más fina que haya: ECMWF
+ha anunciado 0,1° para finales de octubre de 2026 y entrará sola en cuanto
+aparezca la carpeta.
+
+Hasta el 11/05/2026, las pasadas de 06 y 18 UTC están en la carpeta `scda`
+(«short cut-off») y no en `oper`. `rellenar` baja pasadas antiguas del archivo
+de AWS, que llega hasta el 18/01/2023.
 """
 import json
 import logging
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from .. import rejilla
 from ..red import SESION, TIEMPO, get
@@ -27,6 +33,9 @@ log = logging.getLogger(__name__)
 BASE = "https://ecmwf-forecasts.s3.eu-central-1.amazonaws.com"
 HORAS = (0, 6, 12, 18)
 PASO_MAX = 144
+PASO_MAX_CORTO = 90      # 06 y 18 UTC antes de 2025
+MALLA_BASE = "0p25"      # la de la calibración: se guarda siempre
+FIN_SCDA = date(2026, 5, 12)
 HUECO = 1 << 20          # 1 MB
 HILOS = 4
 LICENCIA = "CC BY 4.0. © ECMWF. Datos recortados al dominio, sin otra modificación"
@@ -88,14 +97,30 @@ def resoluciones(fecha, hora):
     return sorted(validas, key=_resol_valor)
 
 
+def flujo(fecha, hora):
+    """Carpeta de la pasada: `scda` para 06 y 18 UTC antes del 12/05/2026."""
+    dia = fecha.date() if isinstance(fecha, datetime) else fecha
+    return "scda" if hora in (6, 18) and dia < FIN_SCDA else "oper"
+
+
 def _url(fecha, hora, resol, paso, ext):
-    return (f"{BASE}/{fecha:%Y%m%d}/{hora:02d}z/ifs/{resol}/oper/"
-            f"{fecha:%Y%m%d}{hora:02d}0000-{paso}h-oper-fc.{ext}")
+    f = flujo(fecha, hora)
+    return (f"{BASE}/{fecha:%Y%m%d}/{hora:02d}z/ifs/{resol}/{f}/"
+            f"{fecha:%Y%m%d}{hora:02d}0000-{paso}h-{f}-fc.{ext}")
 
 
-def completa(fecha, hora, resol):
-    r = SESION.head(_url(fecha, hora, resol, PASO_MAX, "index"), timeout=TIEMPO)
-    return r.status_code == 200
+def _existe(fecha, hora, resol, paso):
+    return SESION.head(_url(fecha, hora, resol, paso, "index"), timeout=TIEMPO).status_code == 200
+
+
+def ultimo_paso(fecha, hora, resol):
+    """144 h si la pasada está completa; 90 h si es una de 06/18 UTC antigua que
+    solo llega ahí; None si aún no está completa."""
+    if _existe(fecha, hora, resol, PASO_MAX):
+        return PASO_MAX
+    if flujo(fecha, hora) == "scda" and _existe(fecha, hora, resol, PASO_MAX_CORTO):
+        return PASO_MAX_CORTO
+    return None
 
 
 def _bajar_paso(fecha, hora, resol, paso):
@@ -134,47 +159,68 @@ def bajar_pasada(fecha, hora, resol, paso_max=PASO_MAX):
     log.info("IFS %s %02dz %s: %d campos de %d pasos", f"{fecha:%F}", hora, resol, len(campos), len(pasos))
     return rejilla.a_netcdf(campos, {
         "fuente": "ECMWF IFS HRES, datos abiertos", "resolucion": resol,
-        "licencia": LICENCIA, "origen": f"{BASE}/{fecha:%Y%m%d}/{hora:02d}z/ifs/{resol}/oper/"})
+        "licencia": LICENCIA,
+        "origen": f"{BASE}/{fecha:%Y%m%d}/{hora:02d}z/ifs/{resol}/{flujo(fecha, hora)}/"})
+
+
+def _una(lote, fecha, hora, resol):
+    """Baja y guarda una pasada si no está ya. True si la guarda, False si aún
+    no está completa o ya estaba; lanza la excepción si falla la descarga."""
+    nombre = f"ifs_{resol}_{fecha:%Y%m%d}{hora:02d}.nc"
+    clave = lote.clave(f"ifs_{resol}", nombre, fecha)
+    if lote.almacen.existe(clave):
+        return False
+    hasta = ultimo_paso(fecha, hora, resol)
+    if hasta is None:
+        log.info("IFS %s %02dz %s: aún incompleta", f"{fecha:%F}", hora, resol)
+        return False
+    datos = bajar_pasada(fecha, hora, resol, hasta)
+    lote.guardar(clave, datos, origen=f"ECMWF IFS {resol} {fecha:%Y%m%d} {hora:02d}z",
+                 licencia=LICENCIA)
+    return True
+
+
+def _recorrer(lote, pasadas, mallas):
+    """Baja cada (fecha, hora) en las mallas que dé `mallas(resols)`. Si una
+    pasada falla (ECMWF contesta a veces «503 Slow Down» durante minutos), se
+    sigue con las demás y se falla al final."""
+    hechas, fallidas = 0, []
+    for fecha, hora in pasadas:
+        try:
+            resols = resoluciones(fecha, hora)
+        except Exception as e:
+            log.warning("IFS %s %02dz: no se pudo listar (%s)", f"{fecha:%F}", hora, e)
+            fallidas.append(f"{fecha:%F} {hora:02d}z")
+            continue
+        for resol in mallas(resols):
+            try:
+                hechas += _una(lote, fecha, hora, resol)
+            except Exception as e:
+                log.warning("IFS %s %02dz %s: falló (%s); sigo con la siguiente",
+                            f"{fecha:%F}", hora, resol, e)
+                fallidas.append(f"{fecha:%F} {hora:02d}z {resol}")
+    if fallidas:
+        raise RuntimeError(f"IFS: {hechas} pasada(s) guardada(s), fallaron {', '.join(fallidas)}")
+    return hechas
 
 
 def ejecutar(lote, dias=2):
     """Baja las pasadas de los últimos `dias` días que estén completas y aún no
-    se hayan guardado. Así un job retrasado o caído se recupera solo.
+    se hayan guardado, en 0,25° y en la malla más fina si la hay. Así un job
+    retrasado o caído se recupera solo."""
+    ahora = datetime.now(timezone.utc)
+    hoy = ahora.replace(hour=0, minute=0, second=0, microsecond=0)
+    pasadas = [(hoy - timedelta(days=d), h) for d in range(dias, -1, -1) for h in HORAS
+               if hoy - timedelta(days=d) + timedelta(hours=h) <= ahora]
+    return _recorrer(lote, pasadas, lambda r: list(dict.fromkeys(
+        [m for m in (MALLA_BASE, r[0] if r else None) if m in r])))
 
-    Si una pasada falla (ECMWF contesta a veces «503 Slow Down» durante
-    minutos), se sigue con las demás y el job falla al final."""
-    hoy = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
-    hechas, fallidas = 0, []
-    for d in range(dias, -1, -1):
-        fecha = hoy - timedelta(days=d)
-        for hora in HORAS:
-            if fecha + timedelta(hours=hora) > datetime.now(timezone.utc):
-                continue
-            try:
-                resols = resoluciones(fecha, hora)
-            except Exception as e:
-                log.warning("IFS %s %02dz: no se pudo listar (%s)", f"{fecha:%F}", hora, e)
-                continue
-            if not resols:
-                continue
-            resol = resols[0]
-            nombre = f"ifs_{resol}_{fecha:%Y%m%d}{hora:02d}.nc"
-            clave = lote.clave(f"ifs_{resol}", nombre, fecha)
-            if lote.almacen.existe(clave):
-                continue
-            if not completa(fecha, hora, resol):
-                log.info("IFS %s %02dz %s: aún incompleta", f"{fecha:%F}", hora, resol)
-                continue
-            try:
-                datos = bajar_pasada(fecha, hora, resol)
-            except Exception as e:
-                log.warning("IFS %s %02dz %s: falló (%s); sigo con la siguiente",
-                            f"{fecha:%F}", hora, resol, e)
-                fallidas.append(f"{fecha:%F} {hora:02d}z")
-                continue
-            lote.guardar(clave, datos, origen=f"ECMWF IFS {resol} {fecha:%Y%m%d} {hora:02d}z",
-                         licencia=LICENCIA)
-            hechas += 1
-    if fallidas:
-        raise RuntimeError(f"IFS: {hechas} pasada(s) guardada(s), fallaron {', '.join(fallidas)}")
-    return hechas
+
+def rellenar(lote, desde, hasta):
+    """Baja del archivo de AWS las pasadas de 0,25° entre dos fechas (incluidas)
+    que no estén ya en el almacén."""
+    d0, d1 = date.fromisoformat(desde), date.fromisoformat(hasta)
+    pasadas = [(datetime(d.year, d.month, d.day, tzinfo=timezone.utc), h)
+               for d in (d0 + timedelta(days=i) for i in range((d1 - d0).days + 1)) for h in HORAS]
+    log.info("IFS relleno %s → %s: %d pasadas", desde, hasta, len(pasadas))
+    return _recorrer(lote, pasadas, lambda r: [MALLA_BASE] if MALLA_BASE in r else [])

@@ -1,0 +1,68 @@
+# Pasadas antiguas de IFS 0,25° del archivo de ECMWF en AWS (desde el
+# 18/01/2023), para recalibrar y rehacer el histórico. Solo se lanza a mano.
+# Reparte el periodo en tramos y baja dos a la vez; lo que ya está en el
+# bucket se salta, así que se puede relanzar si algo se corta.
+name: Relleno IFS histórico
+on:
+  workflow_dispatch:
+    inputs:
+      periodos:
+        description: "Uno o varios periodos desde:hasta (incluida), separados por comas. Ej.: 2024-05-24:2024-07-31,2025-05-24:2025-11-01"
+        required: true
+      dias_por_tramo:
+        description: "Días por job (4 pasadas al día; de 30 s a unos minutos cada una)"
+        default: "12"
+concurrency:
+  group: relleno-ifs
+  cancel-in-progress: false
+permissions:
+  contents: read
+
+jobs:
+  tramos:
+    runs-on: ubuntu-latest
+    outputs:
+      lista: ${{ steps.t.outputs.lista }}
+    steps:
+      - id: t
+        run: |
+          python3 - <<'EOF' >> "$GITHUB_OUTPUT"
+          import json
+          from datetime import date, timedelta
+          n = int("${{ inputs.dias_por_tramo }}")
+          out = []
+          for periodo in "${{ inputs.periodos }}".replace(" ", "").split(","):
+              a, b = periodo.split(":")
+              d, fin = date.fromisoformat(a), date.fromisoformat(b)
+              while d <= fin:
+                  h = min(d + timedelta(days=n - 1), fin)
+                  out.append({"desde": d.isoformat(), "hasta": h.isoformat()})
+                  d = h + timedelta(days=1)
+          print("lista=" + json.dumps(out))
+          EOF
+
+  bajar:
+    needs: tramos
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    strategy:
+      matrix:
+        tramo: ${{ fromJson(needs.tramos.outputs.lista) }}
+      max-parallel: 2
+      fail-fast: false
+    env:
+      PYTHONUNBUFFERED: "1"
+      EXIGIR_R2: "1"
+      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_BRUTO_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_BRUTO_SECRET_ACCESS_KEY }}
+      R2_BUCKET: fuego-bruto
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-file: environment.yml
+          cache-environment: true
+      - name: IFS ${{ matrix.tramo.desde }} → ${{ matrix.tramo.hasta }}
+        shell: bash -el {0}
+        run: python -m fuego_datos rellenar-ifs ${{ matrix.tramo.desde }} ${{ matrix.tramo.hasta }}
