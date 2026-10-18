@@ -6,6 +6,8 @@ sin bucket.
 
 Cada objeto lleva su huella SHA-256 en los metadatos (`sha256`). La
 sincronización la usa para comprobar que la copia del disco es idéntica.
+R2 solo acepta metadatos en ASCII, así que allí los valores van codificados
+como en una URL («©» → «%C2%A9»).
 
 Organización de claves:
     <fuente>/<producto>/<aaaa>/<mm>/<dd>/<fichero>    los datos
@@ -21,6 +23,7 @@ import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import quote, unquote
 
 from .config import RAIZ, var
 
@@ -33,6 +36,14 @@ def sha256(datos: bytes) -> str:
 
 def ahora():
     return datetime.now(timezone.utc)
+
+
+def meta_a_s3(meta: dict) -> dict:
+    return {k: quote(str(v), safe=" /:,;=()<>@+") for k, v in meta.items()}
+
+
+def meta_de_s3(meta: dict) -> dict:
+    return {k: unquote(v) for k, v in meta.items()}
 
 
 @dataclass
@@ -116,7 +127,7 @@ class AlmacenR2:
     def guardar(self, clave, datos: bytes, meta: dict):
         tipo = mimetypes.guess_type(clave)[0] or "application/octet-stream"
         self.s3.put_object(Bucket=self.bucket, Key=clave, Body=datos, ContentType=tipo,
-                           Metadata={k: str(v) for k, v in meta.items()})
+                           Metadata=meta_a_s3(meta))
 
     def existe(self, clave):
         from botocore.exceptions import ClientError
@@ -132,7 +143,7 @@ class AlmacenR2:
         return self.s3.get_object(Bucket=self.bucket, Key=clave)["Body"].read()
 
     def metadatos(self, clave) -> dict:
-        return self.s3.head_object(Bucket=self.bucket, Key=clave).get("Metadata", {})
+        return meta_de_s3(self.s3.head_object(Bucket=self.bucket, Key=clave).get("Metadata", {}))
 
     def listar(self, prefijo=""):
         pag = self.s3.get_paginator("list_objects_v2")

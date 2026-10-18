@@ -1,6 +1,16 @@
 import json
 
-from fuego_datos.almacen import AlmacenLocal, Lote, comprimir, sha256
+from fuego_datos.almacen import AlmacenLocal, Lote, comprimir, meta_a_s3, meta_de_s3, sha256
+
+
+def test_meta_s3_solo_ascii_y_reversible():
+    meta = {"licencia": "CC BY 4.0. © Unión Europea, Copernicus EMS - EFFIS",
+            "origen": "https://firms.modaps.eosdis.nasa.gov/api/area/csv/<MAP_KEY>/x/-10,35,5,44/1",
+            "sha256": sha256(b"x"), "pct": "100%"}
+    s3 = meta_a_s3(meta)
+    assert all(v.isascii() for v in s3.values())
+    assert s3["sha256"] == meta["sha256"]
+    assert meta_de_s3(s3) == meta
 
 
 def test_guardar_leer_listar_borrar(tmp_path):
