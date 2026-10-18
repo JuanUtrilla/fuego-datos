@@ -139,9 +139,12 @@ def bajar_pasada(fecha, hora, resol, paso_max=PASO_MAX):
 
 def ejecutar(lote, dias=2):
     """Baja las pasadas de los últimos `dias` días que estén completas y aún no
-    se hayan guardado. Así un job retrasado o caído se recupera solo."""
+    se hayan guardado. Así un job retrasado o caído se recupera solo.
+
+    Si una pasada falla (ECMWF contesta a veces «503 Slow Down» durante
+    minutos), se sigue con las demás y el job falla al final."""
     hoy = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
-    hechas = 0
+    hechas, fallidas = 0, []
     for d in range(dias, -1, -1):
         fecha = hoy - timedelta(days=d)
         for hora in HORAS:
@@ -162,8 +165,16 @@ def ejecutar(lote, dias=2):
             if not completa(fecha, hora, resol):
                 log.info("IFS %s %02dz %s: aún incompleta", f"{fecha:%F}", hora, resol)
                 continue
-            datos = bajar_pasada(fecha, hora, resol)
+            try:
+                datos = bajar_pasada(fecha, hora, resol)
+            except Exception as e:
+                log.warning("IFS %s %02dz %s: falló (%s); sigo con la siguiente",
+                            f"{fecha:%F}", hora, resol, e)
+                fallidas.append(f"{fecha:%F} {hora:02d}z")
+                continue
             lote.guardar(clave, datos, origen=f"ECMWF IFS {resol} {fecha:%Y%m%d} {hora:02d}z",
                          licencia=LICENCIA)
             hechas += 1
+    if fallidas:
+        raise RuntimeError(f"IFS: {hechas} pasada(s) guardada(s), fallaron {', '.join(fallidas)}")
     return hechas
