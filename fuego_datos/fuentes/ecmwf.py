@@ -1,4 +1,4 @@
-"""IFS de ECMWF, datos abiertos (CC BY 4.0, uso comercial permitido).
+"""IFS de ECMWF, datos abiertos (CC BY 4.0).
 
 Se baja de la copia de ECMWF en AWS, que ECMWF recomienda frente a su portal
 (limitado a 500 conexiones a la vez) y que conserva las pasadas desde 2023;

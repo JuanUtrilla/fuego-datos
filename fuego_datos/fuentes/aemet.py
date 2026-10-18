@@ -1,4 +1,4 @@
-"""AEMET OpenData. Reutilización libre, también comercial, citando a AEMET.
+"""AEMET OpenData. Reutilización libre citando a AEMET.
 
 Nada de esto tiene archivo en AEMET: lo que no se guarda cuando está publicado
 se pierde. Por eso se guarda tal como llega, sin transformar.

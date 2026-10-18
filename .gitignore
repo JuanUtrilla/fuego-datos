@@ -16,3 +16,6 @@ datos_locales/
 __pycache__/
 *.pyc
 .pytest_cache/
+
+# documentación solo en local
+README.md
