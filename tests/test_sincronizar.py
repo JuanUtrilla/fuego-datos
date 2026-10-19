@@ -85,3 +85,16 @@ def test_segunda_pasada_no_vuelve_a_copiar(tmp_path):
     sincronizar(a, [disco], retencion_dias=7)
     r = sincronizar(a, [disco], retencion_dias=7)
     assert r["copiados"] == 0
+
+
+def test_relleno_antiguo_cuenta_por_la_fecha_del_dato(tmp_path):
+    a = AlmacenLocal(tmp_path / "bucket")
+    for clave in ("ecmwf/ifs/2024/05/24/a.nc", "era5land/h/2024/05/01/b.nc", "ecmwf/ifs/2099/01/01/c.nc"):
+        a.guardar(clave, clave.encode(), {"sha256": sha256(clave.encode())})   # subidos hoy
+    disco = tmp_path / "disco"
+    disco.mkdir()
+    r = sincronizar(a, [disco], retencion_dias=7)
+    assert r["borrados"] == 2
+    assert not a.existe("ecmwf/ifs/2024/05/24/a.nc") and not a.existe("era5land/h/2024/05/01/b.nc")
+    assert a.existe("ecmwf/ifs/2099/01/01/c.nc")      # fecha futura: manda la subida
+    assert (disco / "ecmwf/ifs/2024/05/24/a.nc").exists()

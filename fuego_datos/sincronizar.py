@@ -12,9 +12,13 @@ Reglas, por este orden:
 5. Lo que el servidor de la web vuelve a pedir del bucket se queda más tiempo
    (`RETENCION_MINIMA`), aunque ya esté copiado: el IFS de D-8 en adelante y
    el ERA5-Land desde el día 1 del mes de D-6.
+6. La edad se cuenta desde la fecha del dato, la de la ruta (`.../AAAA/MM/DD/...`,
+   hasta el final de ese día), y si la ruta no la lleva, desde la subida. Así
+   un relleno de días antiguos no ocupa el bucket hasta que caduca la subida.
 """
 import logging
 import os
+import re
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -25,6 +29,16 @@ log = logging.getLogger(__name__)
 
 EXCLUIDOS = ("estado/",)
 RETENCION_MINIMA = {"ecmwf/": 10, "era5land/": 40}     # días
+FECHA_EN_RUTA = re.compile(r"/(\d{4})/(\d{2})/(\d{2})/")
+
+
+def fecha_del_dato(o):
+    """Final del día que lleva la ruta, o la subida si es anterior o no hay fecha."""
+    m = FECHA_EN_RUTA.search(o.clave)
+    if not m:
+        return o.modificado
+    fin = datetime(*map(int, m.groups()), tzinfo=timezone.utc) + timedelta(days=1)
+    return min(fin, o.modificado)
 
 
 class Destino:
@@ -97,7 +111,7 @@ def sincronizar(almacen, rutas, retencion_dias=7, simulacion=False):
 
     def caducado(o):
         dias = max([retencion_dias] + [n for p, n in RETENCION_MINIMA.items() if o.clave.startswith(p)])
-        return o.modificado < ahora - timedelta(days=dias)
+        return fecha_del_dato(o) < ahora - timedelta(days=dias)
 
     borrables = []
     if all(d.ok for d in destinos) and not errores:
