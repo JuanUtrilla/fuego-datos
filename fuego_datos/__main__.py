@@ -21,7 +21,7 @@ log = logging.getLogger("fuego_datos")
 
 
 def _jobs():
-    from .fuentes import aemet, ecmwf, era5land, icon_eu, incendios
+    from .fuentes import aemet, ecmwf, era5land, icon_eu, incendios, siar
     # job → (fuente, función, horas máximas sin datos nuevos antes de avisar)
     return {
         "ecmwf": ("ecmwf", ecmwf.ejecutar, 18),
@@ -33,6 +33,7 @@ def _jobs():
         "firms": ("firms", incendios.firms, 30),
         "effis": ("effis", incendios.effis, 168),   # fuera de temporada cambia poco
         "miteco": ("miteco", incendios.miteco, 72),
+        "siar": ("siar", siar.ejecutar, 30),
     }
 
 

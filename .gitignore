@@ -19,3 +19,4 @@ __pycache__/
 
 # documentación solo en local
 README.md
+docs/*.pdf

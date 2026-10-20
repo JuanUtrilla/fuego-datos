@@ -1,0 +1,17 @@
+name: SiAR estaciones
+# Una vez al día: el token deja 10.000 registros y 100 por minuto, así que la
+# pasada dura hora y media larga. A las 05:13 UTC ya están los datos de ayer.
+on:
+  schedule:
+    - cron: "13 5 * * *"
+  workflow_dispatch:
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+jobs:
+  bajar:
+    uses: ./.github/workflows/_bajar.yml
+    with:
+      jobs: "siar"
+      minutos: 150
+    secrets: inherit
