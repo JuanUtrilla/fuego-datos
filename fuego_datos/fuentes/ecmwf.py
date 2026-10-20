@@ -22,6 +22,7 @@ de AWS, que llega hasta el 18/01/2023.
 import json
 import logging
 import re
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime, timedelta, timezone
 
@@ -180,17 +181,16 @@ def _una(lote, fecha, hora, resol):
     return True
 
 
-def _recorrer(lote, pasadas, mallas):
-    """Baja cada (fecha, hora) en las mallas que dé `mallas(resols)`. Si una
-    pasada falla (ECMWF contesta a veces «503 Slow Down» durante minutos), se
-    sigue con las demás y se falla al final."""
+def _vuelta(lote, pasadas, mallas):
+    """Una vuelta sobre `pasadas`. Devuelve las guardadas y las que fallaron,
+    como (fecha, hora, texto para el log)."""
     hechas, fallidas = 0, []
     for fecha, hora in pasadas:
         try:
             resols = resoluciones(fecha, hora)
         except Exception as e:
             log.warning("IFS %s %02dz: no se pudo listar (%s)", f"{fecha:%F}", hora, e)
-            fallidas.append(f"{fecha:%F} {hora:02d}z")
+            fallidas.append((fecha, hora, f"{fecha:%F} {hora:02d}z"))
             continue
         for resol in mallas(resols):
             try:
@@ -198,9 +198,28 @@ def _recorrer(lote, pasadas, mallas):
             except Exception as e:
                 log.warning("IFS %s %02dz %s: falló (%s); sigo con la siguiente",
                             f"{fecha:%F}", hora, resol, e)
-                fallidas.append(f"{fecha:%F} {hora:02d}z {resol}")
+                fallidas.append((fecha, hora, f"{fecha:%F} {hora:02d}z {resol}"))
+    return hechas, fallidas
+
+
+def _recorrer(lote, pasadas, mallas, esperas=()):
+    """Baja cada (fecha, hora) en las mallas que dé `mallas(resols)`. Si una
+    pasada falla, se sigue con las demás. Al acabar se vuelve a por las
+    fallidas tras cada pausa de `esperas` (s): el «503 Slow Down» de S3 dura a
+    veces más que los reintentos de cada petición, pero no media hora. Lo ya
+    guardado se salta, así que repetir una pasada solo baja lo que falta."""
+    hechas, fallidas = _vuelta(lote, pasadas, mallas)
+    for espera in esperas:
+        if not fallidas:
+            break
+        log.info("IFS: %d pasada(s) fallidas; vuelvo a por ellas en %d min",
+                 len(fallidas), espera // 60)
+        time.sleep(espera)
+        n, fallidas = _vuelta(lote, list(dict.fromkeys((f, h) for f, h, _ in fallidas)), mallas)
+        hechas += n
     if fallidas:
-        raise RuntimeError(f"IFS: {hechas} pasada(s) guardada(s), fallaron {', '.join(fallidas)}")
+        raise RuntimeError(f"IFS: {hechas} pasada(s) guardada(s), fallaron "
+                           f"{', '.join(t for _, _, t in fallidas)}")
     return hechas
 
 
@@ -212,8 +231,9 @@ def ejecutar(lote, dias=2):
     hoy = ahora.replace(hour=0, minute=0, second=0, microsecond=0)
     pasadas = [(hoy - timedelta(days=d), h) for d in range(dias, -1, -1) for h in HORAS
                if hoy - timedelta(days=d) + timedelta(hours=h) <= ahora]
+    # Una sola vuelta extra: el job corre cada 3 h y recupera los dos últimos días.
     return _recorrer(lote, pasadas, lambda r: list(dict.fromkeys(
-        [m for m in (MALLA_BASE, r[0] if r else None) if m in r])))
+        [m for m in (MALLA_BASE, r[0] if r else None) if m in r])), esperas=(300,))
 
 
 def rellenar(lote, desde, hasta):
@@ -223,4 +243,5 @@ def rellenar(lote, desde, hasta):
     pasadas = [(datetime(d.year, d.month, d.day, tzinfo=timezone.utc), h)
                for d in (d0 + timedelta(days=i) for i in range((d1 - d0).days + 1)) for h in HORAS]
     log.info("IFS relleno %s → %s: %d pasadas", desde, hasta, len(pasadas))
-    return _recorrer(lote, pasadas, lambda r: [MALLA_BASE] if MALLA_BASE in r else [])
+    return _recorrer(lote, pasadas, lambda r: [MALLA_BASE] if MALLA_BASE in r else [],
+                     esperas=(300, 900, 1800))
