@@ -50,10 +50,16 @@ DIAS_VENTANA = 364          # el token no deja pedir más atrás
 DIAS_REINTENTO_VACIO = 7
 MINUTOS = 130               # el workflow corta a los 150: parar antes y acabar bien
 SEMIHORAS = 48
+INTENTOS_403 = 3
+PAUSA_403 = 120             # segundos antes de repetir un 403
 
 
 class Cuota(Exception):
     """El token ya no deja más por hoy (o por este minuto)."""
+
+
+class Bloqueo(Exception):
+    """La API sigue contestando 403 después de varios intentos."""
 
 
 class FueraDeVentana(Exception):
@@ -64,14 +70,23 @@ def _pide(ruta, token, **params):
     """GET a la API. Devuelve la lista `datos`. La API contesta con HTTP 200 y
     el problema en `MensajeRespuesta` (cuota, fechas fuera de rango...)."""
     url = f"{BASE}/{ruta}"
-    try:
-        r = SESION.get(url, params={"token": token, **params}, timeout=TIEMPO)
-        r.raise_for_status()
-    except requests.RequestException as e:
-        # el token va en la URL: que no salga nunca en el registro (en GitHub es público)
-        estado = getattr(e.response, "status_code", None)
-        raise RuntimeError(f"SiAR {ruta}: {type(e).__name__} {estado or ''} "
-                           f"(Id={params.get('Id')}, {params.get('FechaInicial', '')})") from None
+    for intento in range(1, INTENTOS_403 + 1):
+        try:
+            r = SESION.get(url, params={"token": token, **params}, timeout=TIEMPO)
+            r.raise_for_status()
+            break
+        except requests.RequestException as e:
+            # el token va en la URL: que no salga nunca en el registro (en GitHub es público)
+            estado = getattr(e.response, "status_code", None)
+            msg = (f"SiAR {ruta}: {type(e).__name__} {estado or ''} "
+                   f"(Id={params.get('Id')}, {params.get('FechaInicial', '')})")
+            if estado != 403:
+                raise RuntimeError(msg) from None
+            # 403 suelto con el token y la misma petición válidos (23/10/2026): se repite
+            if intento == INTENTOS_403:
+                raise Bloqueo(msg) from None
+            log.warning("SiAR: 403, se repite en %d s (intento %d/%d)", PAUSA_403, intento, INTENTOS_403)
+            time.sleep(PAUSA_403)
     d = r.json()
     msg = d.get("MensajeRespuesta")
     if msg:
@@ -232,5 +247,9 @@ def ejecutar(lote):
             log.info("SiAR semihorarios: el token no deja pedir el %s", e)
     except Cuota as e:
         log.warning("SiAR: se acabó la cuota (%s). Se sigue mañana", e)
+    except Bloqueo as e:
+        if n == 0:
+            raise RuntimeError(str(e)) from None        # sin nada nuevo, que el job falle y se vea
+        log.warning("SiAR: la API sigue dando 403 (%s). Se para con lo bajado y se sigue mañana", e)
     log.info("SiAR: %d registros en %d ficheros", gastado, n)
     return n
