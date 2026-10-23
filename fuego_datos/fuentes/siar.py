@@ -48,6 +48,7 @@ POR_PETICION = 40           # estaciones por petición: con 40 va bien, con 100 
 PAUSA = 61                  # segundos entre peticiones de datos
 DIAS_VENTANA = 364          # el token no deja pedir más atrás
 DIAS_REINTENTO_VACIO = 7
+MINUTOS = 130               # el workflow corta a los 150: parar antes y acabar bien
 SEMIHORAS = 48
 
 
@@ -170,6 +171,7 @@ def ejecutar(lote):
     hasta, desde = hoy - timedelta(days=1), hoy - timedelta(days=DIAS_VENTANA)
     hecho = _leer_hecho(almacen)
     gastado, n = 0, 0
+    fin = time.monotonic() + 60 * int(var("SIAR_MINUTOS", str(MINUTOS)))
 
     def apunta(tipo, f, cods):
         hecho[tipo].setdefault(f, [])
@@ -178,6 +180,8 @@ def ejecutar(lote):
     def bajar(tipo, d, cods):
         """Una petición: las estaciones `cods` el día `d`. Guarda y apunta."""
         nonlocal gastado, n
+        if time.monotonic() > fin:
+            raise Cuota("tiempo del workflow")
         datos = _pide(f"Datos/{tipo}/ESTACION", token, Id=cods,
                       FechaInicial=d.isoformat(), FechaFinal=d.isoformat())
         time.sleep(PAUSA)
