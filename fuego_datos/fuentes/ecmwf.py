@@ -12,7 +12,8 @@ trae cada paso.
 Pasadas de 00, 06, 12 y 18 UTC, de 0 a 144 h cada 3 h (las de 06 y 18 UTC,
 hasta 90 h antes de 2025). Se guarda siempre la malla de 0,25°, que es con la
 que está calibrado el cálculo de la web, y además la más fina que haya (0,1°
-desde el 24/10/2026).
+desde el 21/10/2026). En 0,1° cada paso viene en dos ficheros, superficie y
+suelo (`-sfc`) y niveles de presión (`-pl`); ver `partes`.
 
 En 0,25°, las de 00 y 12 UTC se bajan enteras, hasta 360 h (15 días): de 144 h
 en adelante, cada 6 h. Así se puede dar la previsión de más días. Antes de la
@@ -114,14 +115,36 @@ def flujo(fecha, hora):
     return "scda" if hora in (6, 18) and dia < FIN_SCDA else "oper"
 
 
-def _url(fecha, hora, resol, paso, ext):
+def _url(fecha, hora, resol, paso, ext, parte=None):
     f = flujo(fecha, hora)
     return (f"{BASE}/{fecha:%Y%m%d}/{hora:02d}z/ifs/{resol}/{f}/"
-            f"{fecha:%Y%m%d}{hora:02d}0000-{paso}h-{f}-fc.{ext}")
+            f"{fecha:%Y%m%d}{hora:02d}0000-{paso}h-{f}-fc{'-' + parte if parte else ''}.{ext}")
+
+
+def partes(fecha, hora, resol):
+    """Ficheros de cada paso. En 0,25° es uno (`…-fc.grib2`); en 0,1° son dos,
+    superficie y suelo (`…-fc-sfc.grib2`) y niveles de presión (`…-fc-pl.grib2`).
+    Se mira en el paso 0. Vacío si la pasada aún no ha empezado a publicarse."""
+    clave = (f"{fecha:%Y%m%d}", hora, resol)
+    if clave not in _PARTES:
+        f = flujo(fecha, hora)
+        r = get(BASE, params={"list-type": "2", "prefix": (
+            f"{fecha:%Y%m%d}/{hora:02d}z/ifs/{resol}/{f}/{fecha:%Y%m%d}{hora:02d}0000-0h-{f}-fc")})
+        sufijos = set(re.findall(r"-0h-[a-z]+-fc(?:-([a-z]+))?\.index</Key>", r.text))
+        if not sufijos:
+            return ()
+        _PARTES[clave] = (None,) if "" in sufijos else tuple(sorted(sufijos))
+    return _PARTES[clave]
+
+
+_PARTES = {}    # (fecha, hora, malla) → partes; no cambia una vez publicada la pasada
 
 
 def _existe(fecha, hora, resol, paso):
-    return SESION.head(_url(fecha, hora, resol, paso, "index"), timeout=TIEMPO).status_code == 200
+    ps = partes(fecha, hora, resol)
+    return bool(ps) and all(
+        SESION.head(_url(fecha, hora, resol, paso, "index", p), timeout=TIEMPO).status_code == 200
+        for p in ps)
 
 
 def paso_largo(fecha, hora, resol):
@@ -161,9 +184,10 @@ def ultimo_paso(fecha, hora, resol, ahora=None):
     return None
 
 
-def _bajar_paso(fecha, hora, resol, paso):
-    url = _url(fecha, hora, resol, paso, "grib2")
-    lineas = [json.loads(l) for l in get(_url(fecha, hora, resol, paso, "index")).text.splitlines() if l.strip()]
+def _bajar_parte(fecha, hora, resol, paso, parte):
+    url = _url(fecha, hora, resol, paso, "grib2", parte)
+    lineas = [json.loads(l) for l in get(_url(fecha, hora, resol, paso, "index", parte)).text.splitlines()
+              if l.strip()]
     campos = elegidos(lineas)
     trozos = []
     for ini, largo in rangos(campos):
@@ -174,7 +198,11 @@ def _bajar_paso(fecha, hora, resol, paso):
         trozos += [r.content[o - ini:o - ini + n] for o, n in campos if ini <= o < ini + largo]
     if len(trozos) != len(campos):
         raise IOError(f"paso {paso}: {len(trozos)} campos de {len(campos)}")
-    return paso, b"".join(trozos)
+    return b"".join(trozos)
+
+
+def _bajar_paso(fecha, hora, resol, paso):
+    return paso, b"".join(_bajar_parte(fecha, hora, resol, paso, p) for p in partes(fecha, hora, resol))
 
 
 def bajar_pasada(fecha, hora, resol, paso_max=PASO_MAX):
@@ -273,12 +301,12 @@ def ejecutar(lote, dias=2):
         [m for m in (MALLA_BASE, r[0] if r else None) if m in r])), esperas=(300,))
 
 
-def rellenar(lote, desde, hasta):
-    """Baja del archivo de AWS las pasadas de 0,25° entre dos fechas (incluidas)
-    que no estén ya en el almacén."""
+def rellenar(lote, desde, hasta, malla=MALLA_BASE):
+    """Baja del archivo de AWS las pasadas de una malla (0,25° si no se dice
+    otra) entre dos fechas (incluidas) que no estén ya en el almacén."""
     d0, d1 = date.fromisoformat(desde), date.fromisoformat(hasta)
     pasadas = [(datetime(d.year, d.month, d.day, tzinfo=timezone.utc), h)
                for d in (d0 + timedelta(days=i) for i in range((d1 - d0).days + 1)) for h in HORAS]
-    log.info("IFS relleno %s → %s: %d pasadas", desde, hasta, len(pasadas))
-    return _recorrer(lote, pasadas, lambda r: [MALLA_BASE] if MALLA_BASE in r else [],
+    log.info("IFS relleno %s %s → %s: %d pasadas", malla, desde, hasta, len(pasadas))
+    return _recorrer(lote, pasadas, lambda r: [malla] if malla in r else [],
                      esperas=(300, 900, 1800))

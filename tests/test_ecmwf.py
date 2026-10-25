@@ -69,3 +69,27 @@ def test_ultimo_paso_de_las_largas(monkeypatch):
     assert ecmwf.ultimo_paso(dia, 12, "0p25", pronto) == 360
     assert ecmwf.paso_largo(datetime(2024, 11, 12), 0, "0p25") == 240
     assert ecmwf.paso_largo(datetime(2024, 11, 12), 12, "0p25") == 360
+
+
+def test_url_de_una_parte():
+    u = _url(datetime(2026, 10, 24, tzinfo=timezone.utc), 0, "0p1", 24, "index", "sfc")
+    assert u.endswith("/20261024/00z/ifs/0p1/oper/20261024000000-24h-oper-fc-sfc.index")
+
+
+def test_partes_una_o_dos(monkeypatch):
+    from fuego_datos.fuentes import ecmwf
+
+    class R:
+        def __init__(self, text):
+            self.text = text
+    listados = {
+        "0p25": "<Key>a/20261024000000-0h-oper-fc.grib2</Key><Key>a/20261024000000-0h-oper-fc.index</Key>",
+        "0p1": "<Key>a/20261024000000-0h-oper-fc-pl.index</Key><Key>a/20261024000000-0h-oper-fc-sfc.index</Key>",
+        "0p05": "",
+    }
+    monkeypatch.setattr(ecmwf, "_PARTES", {})
+    monkeypatch.setattr(ecmwf, "get", lambda url, params: R(listados[params["prefix"].split("/")[3]]))
+    dia = datetime(2026, 10, 24, tzinfo=timezone.utc)
+    assert ecmwf.partes(dia, 0, "0p25") == (None,)
+    assert ecmwf.partes(dia, 0, "0p1") == ("pl", "sfc")
+    assert ecmwf.partes(dia, 0, "0p05") == ()

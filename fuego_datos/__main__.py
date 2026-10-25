@@ -32,6 +32,7 @@ def _jobs():
         "aemet-productos": ("aemet", aemet.productos, 30),
         "firms": ("firms", incendios.firms, 30),
         "effis": ("effis", incendios.effis, 168),   # fuera de temporada cambia poco
+        "effis-prevision": ("effis", incendios.effis_prevision, 30),
         "miteco": ("miteco", incendios.miteco, 72),
         "siar": ("siar", siar.ejecutar, 30),
     }
