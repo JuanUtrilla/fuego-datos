@@ -11,9 +11,14 @@ trae cada paso.
 
 Pasadas de 00, 06, 12 y 18 UTC, de 0 a 144 h cada 3 h (las de 06 y 18 UTC,
 hasta 90 h antes de 2025). Se guarda siempre la malla de 0,25°, que es con la
-que está calibrado el cálculo de la web, y además la más fina que haya: ECMWF
-ha anunciado 0,1° para finales de octubre de 2026 y entrará sola en cuanto
-aparezca la carpeta.
+que está calibrado el cálculo de la web, y además la más fina que haya (0,1°
+desde el 24/10/2026).
+
+En 0,25°, las de 00 y 12 UTC se bajan enteras, hasta 360 h (15 días): de 144 h
+en adelante, cada 6 h. Así se puede dar la previsión de más días. Antes de la
+pasada del 12/11/2024 12z llegaban a 240 h. Pasadas las 144 h, las máximas y
+mínimas de temperatura son de 6 h (`mx2t6`, `mn2t6`) y la racha `10fg` es la
+de las 6 h previas, no la de la última hora. La malla fina se queda en 144 h.
 
 Hasta el 11/05/2026, las pasadas de 06 y 18 UTC están en la carpeta `scda`
 («short cut-off») y no en `oper`. `rellenar` baja pasadas antiguas del archivo
@@ -35,6 +40,10 @@ BASE = "https://ecmwf-forecasts.s3.eu-central-1.amazonaws.com"
 HORAS = (0, 6, 12, 18)
 PASO_MAX = 144
 PASO_MAX_CORTO = 90      # 06 y 18 UTC antes de 2025
+PASO_LARGO = 360         # 00 y 12 UTC en 0,25°
+PASO_LARGO_ANTES = 240   # 00 y 12 UTC antes de INICIO_360
+INICIO_360 = datetime(2024, 11, 12, 12)
+ESPERA_LARGO = timedelta(hours=12)  # si a las 12 h no ha llegado a 360 h, se guarda lo que haya
 MALLA_BASE = "0p25"      # la de la calibración: se guarda siempre
 FIN_SCDA = date(2026, 5, 12)
 HUECO = 1 << 20          # 1 MB
@@ -45,6 +54,7 @@ LICENCIA = "CC BY 4.0. © ECMWF. Datos recortados al dominio, sin otra modificac
 CAMPOS = [
     *[(p, "sfc", None) for p in (
         "2t", "2d", "skt", "mx2t3", "mn2t3",          # temperaturas
+        "mx2t6", "mn2t6",                              # máx. y mín. de 6 h, después de 144 h
         "10u", "10v", "100u", "100v",                 # viento
         "10fg", "10fg3",                               # racha: hasta 90 h horaria, luego trihoraria
         "tp", "ssrd", "strd",                          # precipitación y radiación (acumuladas)
@@ -114,10 +124,37 @@ def _existe(fecha, hora, resol, paso):
     return SESION.head(_url(fecha, hora, resol, paso, "index"), timeout=TIEMPO).status_code == 200
 
 
-def ultimo_paso(fecha, hora, resol):
-    """144 h si la pasada está completa; 90 h si es una de 06/18 UTC antigua que
-    solo llega ahí; None si aún no está completa."""
+def paso_largo(fecha, hora, resol):
+    """Último paso de una pasada larga (00/12 UTC en la malla base), o None."""
+    if hora not in (0, 12) or resol != MALLA_BASE:
+        return None
+    ini = datetime(fecha.year, fecha.month, fecha.day, hora)
+    return PASO_LARGO if ini >= INICIO_360 else PASO_LARGO_ANTES
+
+
+def pasos(paso_max):
+    """Cada 3 h hasta 144 h y cada 6 h desde ahí, como los publica ECMWF."""
+    return list(range(0, min(paso_max, PASO_MAX) + 1, 3)) + list(range(PASO_MAX + 6, paso_max + 1, 6))
+
+
+def ultimo_paso(fecha, hora, resol, ahora=None):
+    """Hasta dónde bajar la pasada, o None si aún no está completa.
+
+    Las largas (00/12 UTC, 0,25°) se esperan hasta su último paso, que ECMWF
+    publica después que el de 144 h. Si a las ESPERA_LARGO de la pasada no ha
+    aparecido, o es una antigua del archivo que no lo tiene, se queda en 144 h.
+    Las demás: 144 h, o 90 h si es una de 06/18 UTC antigua."""
+    largo = paso_largo(fecha, hora, resol)
+    if largo and _existe(fecha, hora, resol, largo):
+        return largo
     if _existe(fecha, hora, resol, PASO_MAX):
+        if largo:
+            ahora = ahora or datetime.now(timezone.utc)
+            ini = datetime(fecha.year, fecha.month, fecha.day, hora, tzinfo=timezone.utc)
+            if ahora - ini < ESPERA_LARGO:
+                return None
+            log.warning("IFS %s %02dz %s: sin el paso de %d h; se guarda hasta %d h",
+                        f"{fecha:%F}", hora, resol, largo, PASO_MAX)
         return PASO_MAX
     if flujo(fecha, hora) == "scda" and _existe(fecha, hora, resol, PASO_MAX_CORTO):
         return PASO_MAX_CORTO
@@ -141,12 +178,12 @@ def _bajar_paso(fecha, hora, resol, paso):
 
 
 def bajar_pasada(fecha, hora, resol, paso_max=PASO_MAX):
-    pasos = list(range(0, paso_max + 1, 3))
+    lista = pasos(paso_max)
     campos = []
     # Se descargan HILOS pasos a la vez y cada uno se recorta en cuanto llega, para
     # no tener en memoria los campos globales de todos los pasos.
     with ThreadPoolExecutor(HILOS) as ex:
-        futuros = [ex.submit(_bajar_paso, fecha, hora, resol, p) for p in pasos]
+        futuros = [ex.submit(_bajar_paso, fecha, hora, resol, p) for p in lista]
         for f in as_completed(futuros):
             paso, bloque = f.result()
             # El fichero del paso 0 trae máximas y mínimas «de relleno» (todo
@@ -157,7 +194,7 @@ def bajar_pasada(fecha, hora, resol, paso_max=PASO_MAX):
             campos += [c for c in map(rejilla.leer_campo, rejilla.separar_mensajes(bloque))
                        if c["paso"] == paso
                        and not (c["tipo_paso"] in ("max", "min") and c["inicio"] == c["paso"])]
-    log.info("IFS %s %02dz %s: %d campos de %d pasos", f"{fecha:%F}", hora, resol, len(campos), len(pasos))
+    log.info("IFS %s %02dz %s: %d campos de %d pasos", f"{fecha:%F}", hora, resol, len(campos), len(lista))
     return rejilla.a_netcdf(campos, {
         "fuente": "ECMWF IFS HRES, datos abiertos", "resolucion": resol,
         "licencia": LICENCIA,

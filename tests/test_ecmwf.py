@@ -42,3 +42,30 @@ def test_recorrer_vuelve_a_por_las_fallidas(monkeypatch):
         assert "2025-06-08 06z 0p25" in str(e) and "2 pasada(s)" in str(e)
     else:
         raise AssertionError("debía fallar")
+
+
+def test_pasos_cada_6_h_despues_de_144():
+    from fuego_datos.fuentes.ecmwf import pasos
+    assert pasos(144) == list(range(0, 145, 3))
+    assert pasos(90) == list(range(0, 91, 3))
+    p = pasos(360)
+    assert len(p) == 85 and p[48:51] == [144, 150, 156] and p[-1] == 360
+
+
+def test_ultimo_paso_de_las_largas(monkeypatch):
+    from fuego_datos.fuentes import ecmwf
+    hay = set()
+    monkeypatch.setattr(ecmwf, "_existe", lambda f, h, r, p: p in hay)
+    dia = datetime(2026, 10, 24, tzinfo=timezone.utc)
+    pronto = datetime(2026, 10, 24, 8, tzinfo=timezone.utc)
+    tarde = datetime(2026, 10, 24, 13, tzinfo=timezone.utc)
+
+    hay |= {144}
+    assert ecmwf.ultimo_paso(dia, 0, "0p25", pronto) is None      # aún esperando las 360 h
+    assert ecmwf.ultimo_paso(dia, 0, "0p25", tarde) == 144        # no llega: lo que haya
+    assert ecmwf.ultimo_paso(dia, 6, "0p25", pronto) == 144       # las de 06/18, cortas
+    assert ecmwf.ultimo_paso(dia, 0, "0p1", pronto) == 144        # la malla fina, corta
+    hay |= {360}
+    assert ecmwf.ultimo_paso(dia, 12, "0p25", pronto) == 360
+    assert ecmwf.paso_largo(datetime(2024, 11, 12), 0, "0p25") == 240
+    assert ecmwf.paso_largo(datetime(2024, 11, 12), 12, "0p25") == 360
