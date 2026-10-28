@@ -9,10 +9,15 @@ se pierde. Por eso se guarda tal como llega, sin transformar.
   tar.gz cada una.
 - productos: mapas de riesgo meteorológico de incendio (de mañana a +7 días y
   el estimado de hoy), avisos de fenómenos adversos (CAP) y HARMONIE-AROME.
+  También los niveles de peligro de incendio en GeoTIFF (1-6 por celda de
+  0,01°, de hoy a +7 días, Península `_p` y Canarias `_c`), unos 0,5 MB al día,
+  para comparar con ellos los mapas de VIGÍA.
 """
+import io
 import json
 import logging
 import re
+import tarfile
 
 from ..almacen import comprimir
 from ..config import var
@@ -22,6 +27,7 @@ log = logging.getLogger(__name__)
 
 LICENCIA = "Fuente: AEMET. Reutilización conforme a la Ley 37/2007 y a la nota legal de AEMET"
 HARMONIE = "https://www.aemet.es/es/api-eltiempo/modelos/download/harmonie/PB"
+INCENDIO_TIF = "https://www.aemet.es/es/api-eltiempo/incendios/download"
 
 
 def _clave():
@@ -114,6 +120,10 @@ def productos(lote):
         clave = lote.clave(producto, f"{producto}_{_hora(lote)}.{ext}")
         n += lote.guardar_si_cambia(f"aemet_{producto}", clave, datos,
                                     origen=f"AEMET OpenData /{ruta}", licencia=LICENCIA)
+    try:
+        n += incendio_niveles(lote)
+    except Exception as e:      # que un cambio en la web de AEMET no se lleve por delante HARMONIE
+        log.warning("AEMET niveles de incendio (GeoTIFF): %s", e)
     r = get(HARMONIE)
     nombre = re.search(r"filename=([^;]+)", r.headers.get("content-disposition", ""))
     sello = re.search(r"(\d+)", nombre.group(1)) if nombre else None
@@ -121,3 +131,21 @@ def productos(lote):
     n += lote.guardar_si_cambia("aemet_harmonie", clave, r.content, origen=HARMONIE,
                                 licencia="CC BY 4.0. Fuente: AEMET")
     return n
+
+
+def incendio_niveles(lote):
+    """El tar.gz de «Descarga de datos georreferenciados» de la web de AEMET, tal cual.
+    Dentro, down_<aaaammdd>_peligro_{p,c}_D00..D07.tif (+ .qml y .sld); la fecha es la
+    de la pasada del modelo y da nombre al fichero. Se regenera una vez al día."""
+    r = get(INCENDIO_TIF)
+    datos = r.content
+    if datos[:2] != b"\x1f\x8b":
+        raise RuntimeError("se esperaba un tar.gz")
+    with tarfile.open(fileobj=io.BytesIO(datos)) as t:
+        nombres = t.getnames()
+    fechas = {m.group(1) for m in map(re.compile(r"down_(\d{8})_peligro_").search, nombres) if m}
+    if not any(n.endswith(".tif") for n in nombres) or len(fechas) != 1:
+        raise RuntimeError(f"contenido inesperado: {nombres[:4]}")
+    clave = lote.clave("incendio_niveles", f"incendio_niveles_{fechas.pop()}.tar.gz")
+    return lote.guardar_si_cambia("aemet_incendio_niveles", clave, datos, origen=INCENDIO_TIF,
+                                  licencia="© AEMET. Autorizado el uso y la reproducción citando a AEMET como autora")
