@@ -1,8 +1,14 @@
 """IFS de ECMWF, datos abiertos (CC BY 4.0).
 
-Se baja de la copia de ECMWF en AWS, que ECMWF recomienda frente a su portal
-(limitado a 500 conexiones a la vez) y que conserva las pasadas desde 2023;
-el portal solo guarda las 12 últimas.
+Dos sitios, con las mismas rutas:
+- El portal de ECMWF (data.ecmwf.int): la fuente directa, sin intermediarios.
+  Solo guarda las 12 últimas pasadas, solo en 0,25° y admite 500 conexiones a
+  la vez entre todos sus usuarios.
+- La copia de ECMWF en AWS: todas las pasadas desde el 18/01/2023 y la malla
+  de 0,1°, pero el 30/10/2026 contestó «503 Slow Down» a todo durante horas.
+Lo de los últimos PORTAL_DIAS días se pide primero al portal y lo que falte
+(la malla de 0,1°, o todo si el portal falla) a AWS. El relleno de pasadas
+antiguas sale de AWS. Ver `_vuelta`.
 
 Cada paso de cada pasada es un GRIB global con todos los campos y un `.index`
 (una línea JSON por campo, con su posición y tamaño). Se lee el índice y se
@@ -37,7 +43,10 @@ from ..red import SESION, TIEMPO, get
 
 log = logging.getLogger(__name__)
 
-BASE = "https://ecmwf-forecasts.s3.eu-central-1.amazonaws.com"
+AWS = "https://ecmwf-forecasts.s3.eu-central-1.amazonaws.com"
+PORTAL = "https://data.ecmwf.int/forecasts"
+PORTAL_DIAS = 2          # el portal guarda las 12 últimas pasadas: hoy y los 2 días anteriores
+BASE = AWS               # de dónde se baja ahora; lo cambia `_vuelta`
 HORAS = (0, 6, 12, 18)
 PASO_MAX = 144
 PASO_MAX_CORTO = 90      # 06 y 18 UTC antes de 2025
@@ -102,9 +111,13 @@ def _resol_valor(nombre):
 
 def resoluciones(fecha, hora):
     """Resoluciones publicadas para una pasada, de la más fina a la más gruesa."""
-    r = get(BASE, params={"list-type": "2", "prefix": f"{fecha:%Y%m%d}/{hora:02d}z/ifs/",
-                          "delimiter": "/"})
-    nombres = [p.rstrip("/").split("/")[-1] for p in re.findall(r"<Prefix>([^<]+)</Prefix>", r.text)]
+    carpeta = f"{fecha:%Y%m%d}/{hora:02d}z/ifs/"
+    if BASE == AWS:
+        r = get(BASE, params={"list-type": "2", "prefix": carpeta, "delimiter": "/"})
+        nombres = [p.rstrip("/").split("/")[-1] for p in re.findall(r"<Prefix>([^<]+)</Prefix>", r.text)]
+    else:
+        r = get(f"{BASE}/{carpeta}")
+        nombres = re.findall(rf'href="/forecasts/{carpeta}([^/"]+)/"', r.text)
     validas = [n for n in nombres if _resol_valor(n)]
     return sorted(validas, key=_resol_valor)
 
@@ -128,9 +141,14 @@ def partes(fecha, hora, resol):
     clave = (f"{fecha:%Y%m%d}", hora, resol)
     if clave not in _PARTES:
         f = flujo(fecha, hora)
-        r = get(BASE, params={"list-type": "2", "prefix": (
-            f"{fecha:%Y%m%d}/{hora:02d}z/ifs/{resol}/{f}/{fecha:%Y%m%d}{hora:02d}0000-0h-{f}-fc")})
-        sufijos = set(re.findall(r"-0h-[a-z]+-fc(?:-([a-z]+))?\.index</Key>", r.text))
+        carpeta = f"{fecha:%Y%m%d}/{hora:02d}z/ifs/{resol}/{f}/"
+        if BASE == AWS:
+            r = get(BASE, params={"list-type": "2", "prefix": (
+                f"{carpeta}{fecha:%Y%m%d}{hora:02d}0000-0h-{f}-fc")})
+            sufijos = set(re.findall(r"-0h-[a-z]+-fc(?:-([a-z]+))?\.index</Key>", r.text))
+        else:
+            r = get(f"{BASE}/{carpeta}")
+            sufijos = set(re.findall(rf'{fecha:%Y%m%d}{hora:02d}0000-0h-{f}-fc(?:-([a-z]+))?\.index"', r.text))
         if not sufijos:
             return ()
         _PARTES[clave] = (None,) if "" in sufijos else tuple(sorted(sufijos))
@@ -213,7 +231,13 @@ def bajar_pasada(fecha, hora, resol, paso_max=PASO_MAX):
     with ThreadPoolExecutor(HILOS) as ex:
         futuros = [ex.submit(_bajar_paso, fecha, hora, resol, p) for p in lista]
         for f in as_completed(futuros):
-            paso, bloque = f.result()
+            try:
+                paso, bloque = f.result()
+            except Exception:
+                # Si falla un paso, la pasada no vale: no se espera a los demás
+                # (con el servidor caído, cada uno tardaría ~6 min en reintentos).
+                ex.shutdown(wait=False, cancel_futures=True)
+                raise
             # El fichero del paso 0 trae máximas y mínimas «de relleno» (todo
             # ceros) con el periodo 0-3 h, que chocarían con las del paso 3.
             # Cada campo se toma solo del fichero de su paso final. Y las
@@ -246,24 +270,50 @@ def _una(lote, fecha, hora, resol):
     return True
 
 
+def _en_portal(fecha):
+    hoy = datetime.now(timezone.utc).date()
+    return (fecha.date() if isinstance(fecha, datetime) else fecha) >= hoy - timedelta(days=PORTAL_DIAS)
+
+
+def _pasada(lote, fecha, hora, mallas):
+    """Baja una pasada en sus mallas; devuelve (guardadas, fallidas)."""
+    hechas, fallidas = 0, []
+    try:
+        resols = resoluciones(fecha, hora)
+    except Exception as e:
+        log.warning("IFS %s %02dz: no se pudo listar en %s (%s)", f"{fecha:%F}", hora, BASE, e)
+        return 0, [(fecha, hora, f"{fecha:%F} {hora:02d}z")]
+    for resol in mallas(resols):
+        try:
+            hechas += _una(lote, fecha, hora, resol)
+        except Exception as e:
+            log.warning("IFS %s %02dz %s: falló en %s (%s); sigo con la siguiente",
+                        f"{fecha:%F}", hora, resol, BASE, e)
+            fallidas.append((fecha, hora, f"{fecha:%F} {hora:02d}z {resol}"))
+    return hechas, fallidas
+
+
 def _vuelta(lote, pasadas, mallas):
     """Una vuelta sobre `pasadas`. Devuelve las guardadas y las que fallaron,
-    como (fecha, hora, texto para el log)."""
+    como (fecha, hora, texto para el log). Lo reciente, primero del portal;
+    después AWS, que salta lo ya guardado y baja lo que falte. Solo cuenta
+    como fallido lo que tampoco se pudo bajar de AWS."""
+    global BASE
     hechas, fallidas = 0, []
-    for fecha, hora in pasadas:
-        try:
-            resols = resoluciones(fecha, hora)
-        except Exception as e:
-            log.warning("IFS %s %02dz: no se pudo listar (%s)", f"{fecha:%F}", hora, e)
-            fallidas.append((fecha, hora, f"{fecha:%F} {hora:02d}z"))
-            continue
-        for resol in mallas(resols):
-            try:
-                hechas += _una(lote, fecha, hora, resol)
-            except Exception as e:
-                log.warning("IFS %s %02dz %s: falló (%s); sigo con la siguiente",
-                            f"{fecha:%F}", hora, resol, e)
-                fallidas.append((fecha, hora, f"{fecha:%F} {hora:02d}z {resol}"))
+    try:
+        for fecha, hora in pasadas:
+            if _en_portal(fecha):
+                BASE = PORTAL
+                n, mal = _pasada(lote, fecha, hora, mallas)
+                hechas += n
+                if mal:
+                    log.info("IFS %s %02dz: el portal falló; pruebo en AWS", f"{fecha:%F}", hora)
+            BASE = AWS
+            n, mal = _pasada(lote, fecha, hora, mallas)
+            hechas += n
+            fallidas += mal
+    finally:
+        BASE = AWS
     return hechas, fallidas
 
 

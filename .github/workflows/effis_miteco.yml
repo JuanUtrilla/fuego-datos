@@ -10,6 +10,6 @@ jobs:
   bajar:
     uses: ./.github/workflows/_bajar.yml
     with:
-      jobs: "effis miteco"
+      jobs: "effis effis-prevision miteco"
       minutos: 20
     secrets: inherit

@@ -93,3 +93,61 @@ def test_partes_una_o_dos(monkeypatch):
     assert ecmwf.partes(dia, 0, "0p25") == (None,)
     assert ecmwf.partes(dia, 0, "0p1") == ("pl", "sfc")
     assert ecmwf.partes(dia, 0, "0p05") == ()
+
+
+def test_listados_del_portal(monkeypatch):
+    from fuego_datos.fuentes import ecmwf
+
+    class R:
+        def __init__(self, text):
+            self.text = text
+    paginas = {
+        "20261030/00z/ifs/": '<a href="/forecasts/20261030/00z/ifs/0p25/">0p25</a>'
+                             '<a href="/forecasts/20261030/00z/ifs/0p1/">0p1</a>',
+        "20261030/00z/ifs/0p25/oper/": '<a href="/forecasts/20261030/00z/ifs/0p25/oper/20261030000000-0h-oper-fc.grib2">'
+                                       '<a href="/forecasts/20261030/00z/ifs/0p25/oper/20261030000000-0h-oper-fc.index">',
+        "20261030/00z/ifs/0p1/oper/": '<a href="/forecasts/20261030/00z/ifs/0p1/oper/20261030000000-0h-oper-fc-pl.index">'
+                                      '<a href="/forecasts/20261030/00z/ifs/0p1/oper/20261030000000-0h-oper-fc-sfc.index">',
+    }
+    monkeypatch.setattr(ecmwf, "BASE", ecmwf.PORTAL)
+    monkeypatch.setattr(ecmwf, "_PARTES", {})
+    monkeypatch.setattr(ecmwf, "get", lambda url: R(paginas[url.removeprefix(ecmwf.PORTAL + "/")]))
+    dia = datetime(2026, 10, 30, tzinfo=timezone.utc)
+    assert ecmwf.resoluciones(dia, 0) == ["0p1", "0p25"]
+    assert ecmwf.partes(dia, 0, "0p25") == (None,)
+    assert ecmwf.partes(dia, 0, "0p1") == ("pl", "sfc")
+    assert _url(dia, 0, "0p25", 3, "index").startswith(ecmwf.PORTAL + "/20261030/00z/")
+
+
+def test_lo_reciente_primero_del_portal(monkeypatch):
+    from datetime import timedelta
+    from fuego_datos.fuentes import ecmwf
+    usadas, guardadas = [], set()
+    portal_va = {"ok": True}
+
+    def una(lote, fecha, hora, resol):
+        usadas.append((fecha.day, hora, resol, ecmwf.BASE))
+        if (fecha, hora, resol) in guardadas:
+            return False
+        if ecmwf.BASE == ecmwf.PORTAL and not portal_va["ok"]:
+            raise IOError("portal caído")
+        guardadas.add((fecha, hora, resol))
+        return True
+
+    # el portal solo tiene 0,25°; AWS también 0,1°
+    monkeypatch.setattr(ecmwf, "resoluciones",
+                        lambda f, h: ["0p25"] if ecmwf.BASE == ecmwf.PORTAL else ["0p1", "0p25"])
+    monkeypatch.setattr(ecmwf, "_una", una)
+    hoy = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    viejo = hoy - timedelta(days=30)
+    A, P = ecmwf.AWS, ecmwf.PORTAL
+
+    hechas, fallidas = ecmwf._vuelta(None, [(viejo, 0), (hoy, 0)], lambda r: r)
+    assert usadas == [(viejo.day, 0, "0p1", A), (viejo.day, 0, "0p25", A),     # lo viejo, solo AWS
+                      (hoy.day, 0, "0p25", P),                                   # lo reciente, portal
+                      (hoy.day, 0, "0p1", A), (hoy.day, 0, "0p25", A)]          # y lo que falte, AWS
+    assert hechas == 4 and fallidas == [] and ecmwf.BASE == A
+
+    usadas.clear(); guardadas.clear(); portal_va["ok"] = False
+    hechas, fallidas = ecmwf._vuelta(None, [(hoy, 6)], lambda r: r)
+    assert hechas == 2 and fallidas == []                                        # el portal falla: todo de AWS
