@@ -71,6 +71,15 @@ def rellenar_ifs(desde, hasta):
     no es un job programado y `estado` no lo vigila."""
     from .fuentes import ecmwf
     almacen = alm.abrir()
+    # R2 gratis hasta 10 GB: si el bucket pasa del tope, no se baja nada (hay que sincronizar antes).
+    # Con tramos de 12 días (unos 0,3 GB) y dos a la vez, como mucho se pasa ~0,6 GB del tope.
+    tope = float(var("RELLENO_TOPE_GB", "6"))
+    ocupado = sum(o.bytes for o in almacen.listar("")) / 1e9
+    if ocupado > tope:
+        log.error("bucket con %.2f GB, por encima del tope de %.1f GB: no se baja nada (sincronizar antes)",
+                  ocupado, tope)
+        return 1
+    log.info("bucket con %.2f GB (tope %.1f GB)", ocupado, tope)
     lote = alm.Lote(almacen, "ecmwf", "ecmwf-relleno")
     try:
         n = ecmwf.rellenar(lote, desde, hasta)
