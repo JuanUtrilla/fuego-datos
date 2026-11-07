@@ -1,0 +1,19 @@
+name: IRDI de la Xunta de Galicia
+# La Xunta lo actualiza una vez al día hacia las 08:48 UTC (medido el 07/11/2026,
+# en horario de invierno). La de las 07:15 cubre un posible adelanto en verano
+# y las demás, retrasos. Si «Actualizado o» no ha cambiado, solo se pide la
+# página y los mapas (que se guardan si cambian).
+on:
+  schedule:
+    - cron: "15 7,9,11,15 * * *"
+  workflow_dispatch:
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+jobs:
+  bajar:
+    uses: ./.github/workflows/_bajar.yml
+    with:
+      jobs: "irdi"
+      minutos: 15
+    secrets: inherit

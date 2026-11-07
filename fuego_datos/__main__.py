@@ -2,6 +2,7 @@
 
     python -m fuego_datos bajar ecmwf
     python -m fuego_datos bajar firms effis miteco
+    python -m fuego_datos bajar irdi
     python -m fuego_datos sincronizar [--simulacion]
     python -m fuego_datos estado [--max-horas 30]
 
@@ -21,7 +22,7 @@ log = logging.getLogger("fuego_datos")
 
 
 def _jobs():
-    from .fuentes import aemet, ecmwf, era5land, icon_eu, incendios, siar
+    from .fuentes import aemet, ecmwf, era5land, icon_eu, incendios, siar, xunta
     # job → (fuente, función, horas máximas sin datos nuevos antes de avisar)
     return {
         "ecmwf": ("ecmwf", ecmwf.ejecutar, 18),
@@ -35,6 +36,7 @@ def _jobs():
         "effis-prevision": ("effis", incendios.effis_prevision, 30),
         "miteco": ("miteco", incendios.miteco, 72),
         "siar": ("siar", siar.ejecutar, 30),
+        "irdi": ("xunta", xunta.irdi, 30),      # una vez al día, hacia las 08:48 UTC
     }
 
 
