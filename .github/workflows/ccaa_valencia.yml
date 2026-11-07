@@ -1,0 +1,17 @@
+name: Comunitat Valenciana, nivel de preemergencia
+# El de mañana aún no estaba a las 13 UTC del 07/11/2026. Se pide de ayer a
+# pasado mañana y se guarda solo si cambia la tabla.
+on:
+  schedule:
+    - cron: "5 8,13,17,21 * * *"
+  workflow_dispatch:
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+jobs:
+  bajar:
+    uses: ./.github/workflows/_bajar.yml
+    with:
+      jobs: "val-preemergencia"
+      minutos: 15
+    secrets: inherit

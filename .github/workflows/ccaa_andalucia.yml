@@ -1,0 +1,18 @@
+name: Andalucía, índice de riesgo de REDIAM
+# Hora de publicación sin medir: el WMS lleva parado desde la predicción del
+# 21/10/2026 (fuera de campaña). Cada pasada pide solo GetCapabilities; los
+# GeoTIFF, solo cuando cambia la predicción.
+on:
+  schedule:
+    - cron: "40 7,11,15,19 * * *"
+  workflow_dispatch:
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+jobs:
+  bajar:
+    uses: ./.github/workflows/_bajar.yml
+    with:
+      jobs: "and-riesgo"
+      minutos: 15
+    secrets: inherit

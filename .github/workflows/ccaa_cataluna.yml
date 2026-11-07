@@ -1,0 +1,20 @@
+name: Cataluña, mapa de perill y Pla Alfa
+# Perill: el de hoy sale a las 09:30-10:00 y el de mañana a las 14:30-15:00, hora
+# local (el 07/11/2026, en invierno: ZIP de hoy a las 08:27 UTC, el de mañana a las
+# 11:09 y los XLSX a las 11:40). Pla Alfa: a las 00:00 y a las 09:30 locales (hoy,
+# 08:33 UTC; mañana, 12:04). La de las 23:20 recoge el cambio de medianoche del
+# Pla Alfa. Lo que no ha cambiado no se vuelve a guardar.
+on:
+  schedule:
+    - cron: "20 9,12,15,23 * * *"
+  workflow_dispatch:
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+jobs:
+  bajar:
+    uses: ./.github/workflows/_bajar.yml
+    with:
+      jobs: "cat-perill cat-alfa"
+      minutos: 15
+    secrets: inherit

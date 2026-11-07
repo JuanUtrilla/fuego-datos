@@ -1,0 +1,17 @@
+name: Castilla-La Mancha, IPP de INFOCAM
+# El parte del 04-09/11/2026 se publicó el 03/11 a las 14:04 UTC. En campaña hay
+# uno al día; fuera, uno por semana o por varios días.
+on:
+  schedule:
+    - cron: "35 8,15,19 * * *"
+  workflow_dispatch:
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+jobs:
+  bajar:
+    uses: ./.github/workflows/_bajar.yml
+    with:
+      jobs: "clm-ipp"
+      minutos: 15
+    secrets: inherit

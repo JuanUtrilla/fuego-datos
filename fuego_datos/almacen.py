@@ -201,17 +201,19 @@ class Lote:
         log.info("guardado %s (%.1f MB)", clave, len(datos) / 1e6)
         return h
 
-    def guardar_si_cambia(self, producto_estado, clave, datos: bytes, origen=None, **extra):
+    def guardar_si_cambia(self, producto_estado, clave, datos: bytes, origen=None, huella=None, **extra):
         """Guarda solo si el contenido difiere del último guardado de ese
         producto. Para fuentes que se sobrescriben en el mismo sitio (el parte
         del MITECO, los mapas de AEMET) y se consultan más a menudo de lo que
-        cambian."""
-        h = sha256(datos)
+        cambian.
+
+        `huella`: lo que se compara, si no es el fichero entero. Para respuestas
+        que cambian en cada petición sin que cambie el dato (identificadores o
+        sellos de tiempo del servidor): se le pasa el SHA-256 de la parte que
+        importa."""
+        h = huella or sha256(datos)
         clave_estado = f"estado/{producto_estado}.json"
-        try:
-            previo = json.loads(self.almacen.leer(clave_estado))
-        except Exception:
-            previo = {}
+        previo = self.ultimo(producto_estado)
         if previo.get("sha256") == h:
             log.info("sin cambios: %s (igual que %s)", producto_estado, previo.get("clave"))
             return False
@@ -219,6 +221,16 @@ class Lote:
         self.almacen.guardar(clave_estado, json.dumps(
             {"sha256": h, "clave": clave, "fecha": ahora().isoformat()}).encode(), {})
         return True
+
+    def ultimo(self, producto_estado):
+        """Lo último que guardó `guardar_si_cambia` de ese producto
+        ({"sha256", "clave", "fecha"}), o {} si nada. Está en `estado/`, que
+        la sincronización no borra: sirve para no volver a bajar lo que ya se
+        guardó aunque el fichero ya no esté en el bucket."""
+        try:
+            return json.loads(self.almacen.leer(f"estado/{producto_estado}.json"))
+        except Exception:
+            return {}
 
     def cerrar(self):
         if not self.ficheros:

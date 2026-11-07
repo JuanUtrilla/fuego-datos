@@ -3,6 +3,7 @@
     python -m fuego_datos bajar ecmwf
     python -m fuego_datos bajar firms effis miteco
     python -m fuego_datos bajar irdi
+    python -m fuego_datos bajar cat-perill cat-alfa and-riesgo nav-riesgo clm-ipp val-preemergencia rio-ipogif
     python -m fuego_datos sincronizar [--simulacion]
     python -m fuego_datos estado [--max-horas 30]
 
@@ -20,10 +21,13 @@ from .config import var
 
 log = logging.getLogger("fuego_datos")
 
+LATIDO_FUERA = 30   # h: límite del latido de los jobs que están fuera de campaña
+
 
 def _jobs():
-    from .fuentes import aemet, ecmwf, era5land, icon_eu, incendios, siar, xunta
-    # job → (fuente, función, horas máximas sin datos nuevos antes de avisar)
+    from .fuentes import aemet, ccaa, ecmwf, era5land, icon_eu, incendios, siar, xunta
+    # job → (fuente, función, horas máximas sin datos nuevos antes de avisar).
+    # None: fuente que solo publica en campaña y ahora no; `estado` solo mira que el job termine bien.
     return {
         "ecmwf": ("ecmwf", ecmwf.ejecutar, 18),
         "icon-eu": ("dwd", icon_eu.ejecutar, 12),
@@ -37,6 +41,14 @@ def _jobs():
         "miteco": ("miteco", incendios.miteco, 72),
         "siar": ("siar", siar.ejecutar, 30),
         "irdi": ("xunta", xunta.irdi, 30),      # una vez al día, hacia las 08:48 UTC
+        # índices de peligro autonómicos (docs/indices_ccaa.md)
+        "cat-perill": ("gencat", ccaa.cat_perill, 30),
+        "cat-alfa": ("gencat", ccaa.cat_alfa, 30),
+        "and-riesgo": ("rediam", ccaa.and_riesgo, ccaa.limite_and()),     # 36 h en campaña; fuera, None
+        "nav-riesgo": ("navarra", ccaa.nav_riesgo, 30),
+        "clm-ipp": ("infocam", ccaa.clm_ipp, ccaa.limite_clm()),          # 36 h en campaña; fuera, 192 h
+        "val-preemergencia": ("vaersa", ccaa.val_preemergencia, 30),
+        "rio-ipogif": ("larioja", ccaa.rio_ipogif, 36),
     }
 
 
@@ -108,23 +120,29 @@ def estado(margen_horas=0):
         return f"hace {(ahora - t) / timedelta(hours=1):5.1f} h" if t else "nunca"
 
     mal = []
-    print(f"{'':4}{'job':17}{'último fin correcto':22}{'últimos datos nuevos':22}límite")
+    print(f"{'':4}{'job':19}{'último fin correcto':22}{'últimos datos nuevos':22}límite")
     for job, (_, _, horas) in _jobs().items():
         try:
             latido = datetime.fromisoformat(json.loads(almacen.leer(f"estado/latido_{job}.json"))["fin"])
         except Exception:
             latido = None
         t = datos.get(job)
+        if horas is None:       # fuera de campaña: basta con que el job termine bien
+            ok = bool(latido and ahora - latido <= timedelta(hours=LATIDO_FUERA + margen_horas))
+            print(f"{'ok' if ok else 'MAL':4}{job:19}{hace(latido):22}{hace(t):22}fuera de campaña")
+            if not ok:
+                mal.append(job)
+            continue
         limite = timedelta(hours=horas + margen_horas)
         ok = bool(latido and t and ahora - latido <= limite and ahora - t <= limite)
-        print(f"{'ok' if ok else 'MAL':4}{job:17}{hace(latido):22}{hace(t):22}{horas} h")
+        print(f"{'ok' if ok else 'MAL':4}{job:19}{hace(latido):22}{hace(t):22}{horas} h")
         if not ok:
             mal.append(job)
     # R2 es gratis hasta 10 GB; el tope propio es 6 GB. Si se pasa, sincronizar en el portátil.
     tope = float(var("BUCKET_TOPE_GB", "6"))
     ocupado = sum(o.bytes for o in almacen.listar("")) / 1e9
     ok = ocupado <= tope
-    print(f"{'ok' if ok else 'MAL':4}{'bucket':17}{ocupado:.2f} GB (tope {tope:g} GB)")
+    print(f"{'ok' if ok else 'MAL':4}{'bucket':19}{ocupado:.2f} GB (tope {tope:g} GB)")
     if not ok:
         mal.append("bucket")
     return 1 if mal else 0

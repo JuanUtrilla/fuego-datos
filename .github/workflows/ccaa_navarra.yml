@@ -1,0 +1,17 @@
+name: Navarra, riesgo de incendio por municipio
+# Hora de publicación sin medir (el 07/11/2026 a las 13 UTC ya estaban D0-D2 de
+# ese día). Cuatro pasadas; se guarda solo si cambia el dato.
+on:
+  schedule:
+    - cron: "50 6,10,14,18 * * *"
+  workflow_dispatch:
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+jobs:
+  bajar:
+    uses: ./.github/workflows/_bajar.yml
+    with:
+      jobs: "nav-riesgo"
+      minutos: 15
+    secrets: inherit
