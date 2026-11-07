@@ -120,6 +120,13 @@ def estado(margen_horas=0):
         print(f"{'ok' if ok else 'MAL':4}{job:17}{hace(latido):22}{hace(t):22}{horas} h")
         if not ok:
             mal.append(job)
+    # R2 es gratis hasta 10 GB; el tope propio es 6 GB. Si se pasa, sincronizar en el portátil.
+    tope = float(var("BUCKET_TOPE_GB", "6"))
+    ocupado = sum(o.bytes for o in almacen.listar("")) / 1e9
+    ok = ocupado <= tope
+    print(f"{'ok' if ok else 'MAL':4}{'bucket':17}{ocupado:.2f} GB (tope {tope:g} GB)")
+    if not ok:
+        mal.append("bucket")
     return 1 if mal else 0
 
 
@@ -146,7 +153,7 @@ def main(argv=None):
         return estado(a.margen_horas)
     from .sincronizar import sincronizar
     rutas = [r for r in var("DESTINO_ARCHIVO", obligatoria=True).split(":") if r]
-    r = sincronizar(alm.abrir(), rutas, int(var("RETENCION_DIAS", "7")), a.simulacion)
+    r = sincronizar(alm.abrir(), rutas, int(var("RETENCION_DIAS", "3")), a.simulacion)
     print(json.dumps(r))
     return 1 if r["errores"] else 0
 

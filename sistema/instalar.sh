@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Instala el timer semanal de sincronización en este ordenador (usuario, sin sudo).
+# Instala el timer diario de sincronización en este ordenador (usuario, sin sudo).
 # Antes: .env con las claves de R2 del token «bruto-portatil» y DESTINO_ARCHIVO.
 set -euo pipefail
 AQUI="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

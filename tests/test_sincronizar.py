@@ -26,6 +26,7 @@ def test_copia_todo_y_borra_solo_lo_viejo(tmp_path):
     disco = tmp_path / "disco"
     disco.mkdir()
     r = sincronizar(a, [disco], retencion_dias=7)
+    assert r.pop("gb_quedan") >= 0
     assert r == {"objetos": 2, "copiados": 2, "errores": 0, "borrados": 1}
     assert (disco / "f/viejo.bin").read_bytes() == b"f/viejo.bin" * 100
     assert not a.existe("f/viejo.bin")          # copiado y viejo: fuera
@@ -37,15 +38,20 @@ def test_copia_todo_y_borra_solo_lo_viejo(tmp_path):
 def test_lo_que_pide_el_servidor_se_queda_mas(tmp_path):
     a = _bucket(tmp_path)
     for clave, dias in (("era5land/h/1.nc", 30), ("era5land/h/2.nc", 41),
-                        ("ecmwf/i/1.nc", 9), ("ecmwf/i/2.nc", 11)):
+                        ("ecmwf/ifs_0p25/1.nc", 9), ("ecmwf/ifs_0p25/2.nc", 11),
+                        ("ecmwf/ifs_0p1/1.nc", 2), ("ecmwf/ifs_0p1/2.nc", 4),
+                        ("manifiestos/x/1.json", 8), ("manifiestos/x/2.json", 10)):
         a.guardar(clave, clave.encode(), {"sha256": sha256(clave.encode())})
         _envejecer(a, clave, dias)
     disco = tmp_path / "disco"
     disco.mkdir()
-    sincronizar(a, [disco], retencion_dias=7)
-    assert all((disco / c).exists() for c in ("era5land/h/1.nc", "era5land/h/2.nc", "ecmwf/i/1.nc"))
-    assert a.existe("era5land/h/1.nc") and a.existe("ecmwf/i/1.nc")
-    assert not a.existe("era5land/h/2.nc") and not a.existe("ecmwf/i/2.nc")
+    sincronizar(a, [disco], retencion_dias=3)
+    assert all((disco / c).exists() for c in ("era5land/h/1.nc", "era5land/h/2.nc", "ecmwf/ifs_0p25/1.nc",
+                                              "ecmwf/ifs_0p1/2.nc", "manifiestos/x/2.json"))
+    quedan = ("era5land/h/1.nc", "ecmwf/ifs_0p25/1.nc", "ecmwf/ifs_0p1/1.nc", "manifiestos/x/1.json")
+    fuera = ("era5land/h/2.nc", "ecmwf/ifs_0p25/2.nc", "ecmwf/ifs_0p1/2.nc", "manifiestos/x/2.json")
+    assert all(a.existe(c) for c in quedan)
+    assert not any(a.existe(c) for c in fuera)
 
 
 def test_disco_desconectado_no_borra(tmp_path):

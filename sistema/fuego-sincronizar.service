@@ -1,5 +1,5 @@
 [Unit]
-Description=Copia semanal del bucket fuego-bruto al disco y limpieza del bucket
+Description=Copia diaria del bucket fuego-bruto al disco y limpieza del bucket
 Wants=network-online.target
 After=network-online.target
 

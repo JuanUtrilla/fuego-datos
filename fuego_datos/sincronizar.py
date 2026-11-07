@@ -9,9 +9,15 @@ Reglas, por este orden:
    destino no está montado (disco desconectado), no se borra nada.
 4. `estado/` no se copia ni se borra: es lo que usan los jobs para no guardar
    dos veces lo mismo.
-5. Lo que el servidor de la web vuelve a pedir del bucket se queda más tiempo
-   (`RETENCION_MINIMA`), aunque ya esté copiado: el IFS de D-8 en adelante y
-   el ERA5-Land desde el día 1 del mes de D-6.
+5. El bucket se queda solo con lo imprescindible (R2 es gratis hasta 10 GB y
+   el tope propio es 6 GB). Por defecto, RETENCION_DIAS (3): lo justo para que
+   los jobs que miran hasta 2 días atrás (IFS) no vuelvan a bajar lo que ya
+   hay. Más tiempo, aunque ya esté copiado (`RETENCION_MINIMA`):
+   - el IFS a 0,25°, que el servidor de la web pide desde D-8;
+   - el ERA5-Land, que el servidor pide desde el día 1 del mes de D-6 y el job
+     mira hasta D-25;
+   - los manifiestos, con los que `estado` sabe cuándo guardó cada job (EFFIS
+     avisa a los 7 días).
 6. La edad se cuenta desde la fecha del dato, la de la ruta (`.../AAAA/MM/DD/...`,
    hasta el final de ese día), y si la ruta no la lleva, desde la subida. Así
    un relleno de días antiguos no ocupa el bucket hasta que caduca la subida.
@@ -28,7 +34,7 @@ from .almacen import sha256
 log = logging.getLogger(__name__)
 
 EXCLUIDOS = ("estado/",)
-RETENCION_MINIMA = {"ecmwf/": 10, "era5land/": 40}     # días
+RETENCION_MINIMA = {"ecmwf/ifs_0p25/": 10, "era5land/": 40, "manifiestos/": 9}     # días
 FECHA_EN_RUTA = re.compile(r"/(\d{4})/(\d{2})/(\d{2})/")
 
 
@@ -76,7 +82,7 @@ class Destino:
         self.db.commit()
 
 
-def sincronizar(almacen, rutas, retencion_dias=7, simulacion=False):
+def sincronizar(almacen, rutas, retencion_dias=3, simulacion=False):
     destinos = [Destino(r) for r in rutas]
     for d in destinos:
         if not d.ok:
@@ -121,8 +127,11 @@ def sincronizar(almacen, rutas, retencion_dias=7, simulacion=False):
         log.warning("hubo %d errores de copia: esta vez no se borra nada del bucket", errores)
     if borrables and not simulacion:
         almacen.borrar(borrables)
-    log.info("%s: %d objetos, %d copiados, %d errores, %d %s del bucket (más de %d días)",
-             almacen, len(objetos), copiados, errores, len(borrables),
-             "se borrarían" if simulacion else "borrados", retencion_dias)
+    total = sum(o.bytes for o in objetos) / 1e9
+    queda = total - sum(o.bytes for o in objetos if o.clave in set(borrables)) / 1e9
+    log.info("%s: %d objetos (%.2f GB), %d copiados, %d errores, %d %s del bucket (más de %d días); "
+             "%s %.2f GB", almacen, len(objetos), total, copiados, errores, len(borrables),
+             "se borrarían" if simulacion else "borrados", retencion_dias,
+             "quedarían" if simulacion else "quedan", queda)
     return {"objetos": len(objetos), "copiados": copiados, "errores": errores,
-            "borrados": 0 if simulacion else len(borrables)}
+            "borrados": 0 if simulacion else len(borrables), "gb_quedan": round(queda, 2)}
