@@ -37,7 +37,7 @@ from zoneinfo import ZoneInfo
 import requests
 
 from ..almacen import comprimir
-from ..red import SESION, TIEMPO, get
+from ..red import SESION, TIEMPO, SinDatos, get
 
 log = logging.getLogger(__name__)
 
@@ -177,6 +177,7 @@ PERILL_FICHEROS = {           # el ZIP municipal (unos 15 MB cada uno) no se baj
 PERILL_CELDAS = 1385          # rejilla de 5 km (07/11/2026)
 PERILL_MUNICIPIS = 947
 PERILL_NIVELES = {"baix", "moderat", "alt", "molt alt", "extrem"}
+PERILL_SIN = "sense dades"
 
 
 def dbf(datos: bytes):
@@ -217,6 +218,8 @@ def perill_rejilla(datos: bytes):
     faltan = {"perill", "Data", "Creacio"} - set(campos)
     if faltan:
         raise Formato(f"faltan los campos {sorted(faltan)} en el DBF (hay {campos})")
+    if not filas:                # de madrugada, el de demà aún no está hecho
+        raise SinDatos("rejilla vacía (aún sin publicar)")
     if len(filas) != PERILL_CELDAS:
         raise Formato(f"{len(filas)} celdas; se esperaban {PERILL_CELDAS}")
     datas, creacions = {f["Data"] for f in filas}, {f["Creacio"] for f in filas}
@@ -259,20 +262,26 @@ def xlsx_filas(datos: bytes):
 
 
 def perill_municipis(datos: bytes, horizonte):
-    """XLSX municipal → (fecha válida, nº de municipios, huella). `horizonte`: AVUI o DEMA."""
+    """XLSX municipal → (fecha válida, nº de municipios, huella). `horizonte`: AVUI o DEMA.
+
+    De madrugada, el de avui es el demà de la víspera, con sus columnas (PERILL_DEMA),
+    y el de demà sale con todos los municipios «Sense Dades» hasta que lo rehacen."""
     filas, huella = xlsx_filas(datos)
     cab = next((i for i, f in enumerate(filas) if "CODI" in f), None)
     if cab is None:
         raise Formato("no encuentro la cabecera CODI en el XLSX")
     nombres = filas[cab]
-    esperadas = ["CODI", "MUNICIPI", "COMARCA", f"PERILL_{horizonte}", f"DATA_{horizonte}"]
-    if [c for c in nombres if c] != esperadas:
-        raise Formato(f"columnas {nombres}; se esperaban {esperadas}")
+    validas = [["CODI", "MUNICIPI", "COMARCA", f"PERILL_{h}", f"DATA_{h}"]
+               for h in ([horizonte] if horizonte == "DEMA" else [horizonte, "DEMA"])]
+    if [c for c in nombres if c] not in validas:
+        raise Formato(f"columnas {nombres}; se esperaban {validas[0]}")
     i0 = nombres.index("CODI")
     datos_m = [f[i0:i0 + 5] for f in filas[cab + 1:] if len(f) > i0 + 4 and re.fullmatch(r"\d{5}", f[i0])]
     if len(datos_m) != PERILL_MUNICIPIS:
         raise Formato(f"{len(datos_m)} municipios; se esperaban {PERILL_MUNICIPIS}")
     niveles = {f[3].strip().lower() for f in datos_m}
+    if niveles == {PERILL_SIN}:
+        raise SinDatos("todos los municipios «Sense Dades» (aún sin publicar)")
     if not niveles <= PERILL_NIVELES:
         raise Formato(f"niveles desconocidos: {sorted(niveles - PERILL_NIVELES)}")
     fechas = {f[4] for f in datos_m}
@@ -301,6 +310,9 @@ def cat_perill(lote):
                 valido, n, huella = perill_municipis(r.content, nombre.rsplit("_", 1)[1].upper())
                 sello, extra = _hhmmss(lote), {}
             _cerca(valido, hoy, 2, 2, f"perill {nombre}")
+        except SinDatos as e:
+            log.info("perill %s: %s", nombre, e)
+            return 0
         except Formato as e:
             _fallo(lote, "perill", nombre, r.content, e)
             raise

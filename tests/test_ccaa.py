@@ -13,6 +13,7 @@ import pytest
 from fuego_datos import __main__ as principal
 from fuego_datos.almacen import AlmacenLocal, Lote
 from fuego_datos.fuentes import ccaa
+from fuego_datos.red import SinDatos
 
 DATOS = Path(__file__).parent / "datos_ccaa"
 INICIO = datetime(2026, 11, 7, 13, 0, tzinfo=timezone.utc)
@@ -329,3 +330,14 @@ def test_estado_fuera_de_campana_solo_mira_el_latido(monkeypatch, tmp_path, caps
                     json.dumps({"fin": datetime.now(timezone.utc).isoformat(), "nuevos": 0}).encode(), {})
     assert principal.estado() == 0                       # sin datos nuevos desde hace semanas, pero termina bien
     assert "fuera de campaña" in capsys.readouterr().out
+
+
+def test_perill_de_madrugada():
+    """Lo que publica la Generalitat a las 03:40 del 09/11/2026: avui con las columnas
+    del demà de la víspera, y demà aún sin hacer."""
+    valido, n, _ = ccaa.perill_municipis(_lee("perill_noche_municipis_avui.gz"), "AVUI")
+    assert (valido, n) == (date(2026, 11, 9), 947)
+    with pytest.raises(SinDatos, match="Sense Dades"):
+        ccaa.perill_municipis(_lee("perill_noche_municipis_dema.gz"), "DEMA")
+    with pytest.raises(SinDatos, match="vacía"):
+        ccaa.perill_rejilla(_lee("perill_noche_rejilla_dema.gz"))
