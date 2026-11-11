@@ -76,9 +76,15 @@ Límite de horas sin datos nuevos, en `_jobs()`:
 | Job | Límite | Por qué |
 |---|---|---|
 | `cat-perill`, `cat-alfa`, `nav-riesgo`, `val-preemergencia` | 30 h | publican todos los días del año y el fichero lleva la fecha |
-| `rio-ipogif` | 36 h | una referencia al día, a hora sin medir |
+| `rio-ipogif` | 36 h; **pausado** desde el 10/11/2026 | una referencia al día, a hora sin medir |
 | `clm-ipp` | 36 h del 1/06 al 15/10; fuera, 192 h | fuera de campaña hay un parte por semana; 192 h caben en los 9 días que el bucket guarda los manifiestos |
 | `and-riesgo` | 36 h del 1/06 al 15/10; fuera, **ninguno** | el WMS deja de actualizarse fuera de campaña (el 07/11/2026 seguía en la predicción del 21/10) |
+
+**La Rioja, pausada (10/11/2026).** `bi.larioja.org` no ha respondido a GitHub
+ninguna vez desde el alta del 07/11 (522; desde el portátil, 403). El cron de
+`ccaa_rioja.yml` está comentado y el job está en `PAUSADOS` de
+`fuego_datos/__main__.py`, así que `estado` no lo vigila; se puede lanzar a mano.
+El acceso se pide en `r10-mejoras/indices_ccaa/SOLICITUDES.md`.
 
 Con límite «ninguno» (`None`), `estado` solo exige que el job haya terminado bien
 en las últimas 30 h (latido): avisa si el servicio se cae o cambia de formato,

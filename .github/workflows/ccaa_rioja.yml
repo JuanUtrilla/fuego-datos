@@ -2,9 +2,12 @@ name: La Rioja, IPOGIF
 # Una fecha de referencia al día (el 07/11/2026 a las 13 UTC la última era la
 # del 06/11, con D+1 = 07/11). Si una pasada falla, la siguiente recupera la
 # referencia anterior.
+#
+# Pausado el 10/11/2026: bi.larioja.org no responde a GitHub (522). Al volver,
+# descomentar el cron y quitar rio-ipogif de PAUSADOS en fuego_datos/__main__.py.
 on:
-  schedule:
-    - cron: "45 7,13,19 * * *"
+  # schedule:
+  #   - cron: "45 7,13,19 * * *"
   workflow_dispatch:
 concurrency:
   group: ${{ github.workflow }}

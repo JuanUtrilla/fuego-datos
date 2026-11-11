@@ -23,6 +23,11 @@ log = logging.getLogger("fuego_datos")
 
 LATIDO_FUERA = 30   # h: límite del latido de los jobs que están fuera de campaña
 
+# Jobs que se pueden lanzar a mano pero que `estado` no vigila. rio-ipogif: bi.larioja.org
+# no responde a GitHub (522; 403 desde el portátil) desde el alta, 07/11/2026. Acceso pedido
+# en r10-mejoras/indices_ccaa/SOLICITUDES.md; al tenerlo, quitarlo de aquí y volver a poner el cron.
+PAUSADOS = {"rio-ipogif"}
+
 
 def _jobs():
     from .fuentes import aemet, ccaa, ecmwf, era5land, icon_eu, incendios, siar, xunta
@@ -122,6 +127,9 @@ def estado(margen_horas=0):
     mal = []
     print(f"{'':4}{'job':19}{'último fin correcto':22}{'últimos datos nuevos':22}límite")
     for job, (_, _, horas) in _jobs().items():
+        if job in PAUSADOS:
+            print(f"{'--':4}{job:19}{'':44}pausado")
+            continue
         try:
             latido = datetime.fromisoformat(json.loads(almacen.leer(f"estado/latido_{job}.json"))["fin"])
         except Exception:

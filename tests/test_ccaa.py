@@ -332,6 +332,14 @@ def test_estado_fuera_de_campana_solo_mira_el_latido(monkeypatch, tmp_path, caps
     assert "fuera de campaña" in capsys.readouterr().out
 
 
+def test_estado_no_vigila_los_pausados(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(principal.alm, "abrir", lambda: AlmacenLocal(tmp_path))
+    monkeypatch.setattr(principal, "_jobs", lambda: {"rio-ipogif": ("larioja", None, 36)})
+    monkeypatch.setattr(principal, "PAUSADOS", {"rio-ipogif"})
+    assert principal.estado() == 0                       # nunca ha bajado nada, pero está pausado
+    assert "pausado" in capsys.readouterr().out
+
+
 def test_perill_de_madrugada():
     """Lo que publica la Generalitat a las 03:40 del 09/11/2026: avui con las columnas
     del demà de la víspera, y demà aún sin hacer."""
